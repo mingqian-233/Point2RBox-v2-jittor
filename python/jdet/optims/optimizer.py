@@ -74,4 +74,11 @@ class Adam(optim.Adam, Optimizer):
 
 @OPTIMS.register_module()
 class AdamW(optim.AdamW, Optimizer):
-    pass
+    def __init__(self, params, lr, eps=1e-8, betas=(0.9, 0.999), weight_decay=0, grad_clip=None):
+        super(AdamW, self).__init__(params, lr, eps, betas, weight_decay)
+        self.grad_clip = grad_clip
+
+    def pre_step(self, loss, retain_graph=False):
+        super(AdamW, self).pre_step(loss, retain_graph)
+        if self.grad_clip is not None:
+            self.clip_grad_norm(**self.grad_clip)
