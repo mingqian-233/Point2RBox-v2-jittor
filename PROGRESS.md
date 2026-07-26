@@ -168,3 +168,24 @@
 
 ### 测试面板
 - **43 passed / 1 skipped**（L0×10 + L1×15 + L2×15 + smoke×3）
+
+---
+
+## 2026-07-26（Day 1，追加：M4 收官 + M6 正式训练开跑）
+
+### 关键事件
+- **又修一个底座致命 bug**：`ops/nms_rotated.py` CUDA kernel 的宿主后处理直接解引用
+  device 指针，默认 allocator 下任意 N 段错误（只在 managed allocator 下侥幸可用）。
+  改 mmcv 标准显式 memcpy，N=16~5000 全过、CPU/GPU keep 集合一致。**该 bug 会炸掉
+  所有推理/评测路径**，已通知 B（他的 v3 推理也会踩）
+- 测试路径全通：score_thr 0.001 → 1577 dets → 逐类 NMS → 降序 → max_per_img cap
+- **冒烟即达 M4 验收**：iter 1350 无 NaN、warmup 正确、loss 量级与 torch 同档
+  （cls 0.6-0.7 / bbox 0.8 / vor 1.0-1.3 / ovl 0.7-1.1）
+- **R5 风险解除**：JIT 暖机后 2.6 fps（0.38s/iter，与 torch baseline 相当，且是共卡实测），
+  变长 GT 未触发重编译灾难，无需 bucket padding
+- **M6 正式训练启动**（14:25，commit 4c15ae7 干净状态，logs/train_v2_official.log，
+  ETA ~16h 共卡 / baseline 21:00 让卡后会加速）。监控挂 epoch 边界/NaN/mAP
+
+### 测试面板
+- 43 passed / 1 skipped（head feat 梯度改稳健度量：整体相对 L2<1e-3 + 违约<0.2%，
+  GPU conv 反向原子累加有 ~0.1% 非确定尾部）
