@@ -1,4 +1,4 @@
-# 项目状态一览（快照：2026-07-26 19:20，Day 1 结束前）
+# 项目状态一览（快照：2026-07-26 22:00，Day 1 晚）
 
 > 给后来接手者的单页地图。历史细节看 `PROGRESS.md`（追加式日报），
 > 本文只保留"现在是什么状态、东西在哪、接下来做什么"。
@@ -22,9 +22,10 @@
 | L0/L1/L2/L3 测试体系 | ✅ | L3=真实训练权重整模型前向 rel L2 ≤1.2e-3 |
 | M6 端到端训练（实验 #1） | 🔄 在跑 | 见下"在跑的东西" |
 | 实验 X（PyTorch baseline 对照组） | 🔄 epoch 8/12 | ETA 今晚 ~23:30 |
-| M7 两阶段（代码件） | ✅ 代码就绪 | 伪标签工具链 + RotatedFCOSHead + RotatedIoULoss 全 parity |
+| M7 两阶段（代码件） | ✅ 全 parity | FCOS head golden：loss≤1e-3、cls+ctr 梯度≤1e-4（CPU 紧验） |
 | M7 两阶段（执行） | ⬜ 等 #1 ckpt | 明天 |
-| M8 交付（README/HF/提交包） | ⬜ | 等训练结果 |
+| 第 2 层数据集 loaders | ✅ DOTA-txt 系 | `mm_datasets.py`（v1.5/v2/STAR/RSAR/OCDPCB）；XML/COCO 系登记于 port_scope |
+| M8 交付（README/HF/提交包） | 🔄 README 已重写 | 结果表 TBD 等训练；HF/提交包等 ckpt |
 
 ## 在跑的东西（重启后自查这里）
 
@@ -60,12 +61,15 @@
    X ckpt 跑官方 pseudo-generator → M7 伪标签对照物 + C4b json diff
 2. 【等 Jittor ckpt，明天】val/test 评测 → 打 tag `v2-stable` → 伪标签生成
    （`tools/generate_pseudo_labels.py`）→ stage-2 训练（config 已备）
-3. stage-2 head 的 torch parity golden（开训前，半小时）
-4. 铁律三第 2 层数据集 loaders（dior/star/rsar 分钟级；hrsc/sku110k 等异构中等，
-   可延后但需在 port_scope.md 登记）
-5. `--task=test` 的 merge_patches 验证 + DOTA 提交包
-6. M8：README 重写 / HF 上传 / 20-iter 曲线对照补充
-7. 独占 GPU 后复核 HeadParity feat 梯度容差（现 5e-2，共卡 cudnn 漂移）
+3. `--task=test` 的 merge_patches 验证 + DOTA 提交包
+4. M8 收尾：结果表回填 README / HF 上传 / 20-iter 曲线对照补充
+5. （可选）XML/COCO 系数据集 loaders（DIOR/FAIR/HRSC/DIATOM/SKU110K/SARDet），
+   已在 port_scope.md 登记，主线不依赖
+
+注：22:00 起底座 GN 换成两遍式 `GroupNorm2Pass`、diff_iou 改中心化坐标（0a55c59）。
+正在跑的 v2 训练进程加载的是启动时的旧代码：diff_iou 不在 v2 路径上；一遍式 GN
+数值语义无错（仅精度小差），**不重启训练**，stage-2 起自然用新代码。
+HeadParity/FCOSHeadParity 梯度已改「GPU 松验 + CPU 紧验」，不再依赖独占 GPU 复核。
 
 ## 需要用户做的两件事
 
