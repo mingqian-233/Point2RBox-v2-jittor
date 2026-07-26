@@ -120,3 +120,31 @@
 ### 接下来
 - M4：v2 head（43KB，按方法块拆 commit）+ detector + config（targets/bids 约定定下后同步 B）
 - C4（DOTA COCO json + DOTAMetric）与 M4 交错做
+
+---
+
+## 2026-07-26（Day 1，追加：M4 主体完成）
+
+### 做完什么
+- **TED 移植**（third_parties/ted，权重转 pkl，4 输出 parity 过）——v2 detector 依赖，
+  放 third_parties 保持上游 import 路径且不越 B 的 models/edge/* 命名空间
+- **detector 移植**（networks/point2rbox_v2.py）：dual-stream 三路增广 + bids 维护 +
+  copy-paste cache + TED 边缘注入。targets 约定已在 COORD 公布（B 照抄）
+- **head 移植**（roi_heads/point2rbox_v2_head.py，922 行源）：
+  - index_reduce_('amin') 语义分析为组内代表（unique 组内恒同值）；'mean'（带梯度）
+    用 one-hot 矩阵乘；unique 走 numpy（detach 量）
+  - GPU 冒烟：predict + 6 losses + 双分支梯度非零
+- **GPU 阻塞点修复**：jt.linalg.det/inv 是 numpy_code（GPU 要 cupy）→ 全部换 2×2 手工式；
+  cublas_batched_matmul 不广播 → solve_2x2 显式 expand
+- **DistanceAnglePointCoder** 移植（boxes/coder.py）
+- **C4a 数据集**（data/p2rv2_dota.py）：直读 B 的 split_ss_dota txt。三个不能复用底座的点：
+  point_dummy 官方=1（底座 0.1）、RotatedResize 会重规范角度（点框 0→-π/2，破坏 head
+  约定）→ 自写 MMRotateResize、RotatedRandomFlip 翻转数学与 mmrotate 不同 → 自写
+  MMRotateRandomFlip。**filter_empty_gt 后 12800 样本 = B 对账数 = 官方日志 6400 iter@bs2** ✅
+- **config**（configs/point2rbox_v2/point2rbox_v2_1x_dota.py）逐行对照官方 +
+  **L0 Jittor 侧逐值比对 10 passed**
+- 冒烟训练已启动（与实验 X 共卡，首跑 JIT 编译中）
+
+### 当前数字
+- 测试面板：45 passed / 1 skipped（L0×10 + L1×15 + L2×14 + smoke×3 + 其余）
+- 实验 X @GPU0：epoch 2，loss 2.05 稳降，ETA ~7h
