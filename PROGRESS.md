@@ -253,3 +253,23 @@
   （最多时 2 个 jittor 训练 + torch baseline 同挤 GPU 0）——每次重启的旧世代
   没有被完全清理（杀父进程后 jittor 子进程孤儿化并继续持锁/持显存）
 - 当前：单实例训练（18:41 起，带 lived_ops 打点），等 iter 500 数据最终确认
+
+---
+
+## 2026-07-26（Day 1，追加：性能问题全部结案）
+
+### 结案报告（三个真问题 + 一个乌龙）
+1. **diag3d python 循环建图**（真）：O(N) 图节点 → grad 分钟级。已修（批量闭式）
+2. **逐实例 voronoi/L_target 循环**（真）：同类。已修（分块批量/argsort 分桶）
+3. **_group_mean one-hot 矩阵乘**（真）：O(G·N·C)，高 num_pos 批次 10-20s/iter。
+   已修（scatter-add，最坏批次实测 1.0s/iter 与 torch 持平）
+4. **"周期性静默窗口"**（乌龙）：nohup 下 python stdout 块缓冲让日志成批冲刷，
+   基于文件 mtime 的看门狗误报。**日志内嵌时间戳证明 20:00 的 run 全程无 >90s 间隔**。
+   看门狗已改按日志内时间戳判停
+- 附带排除项：图节点泄漏（liveness 打点平稳）、shape 重编译（无新 .so）、
+  数据内容驱动（慢区批次实例数平常）
+- 有效情报：jittor Dataset shuffle 跨运行确定性；数据 max 实例 648/patch
+
+### 当前
+- 训练（20:00 起，commit ba5b766）全速稳定，~2.5-2.8fps，ETA 明晨 ~4-5 点
+- PyTorch baseline epoch 9/12（LR 已进入首个衰减档），ETA ~23:40
