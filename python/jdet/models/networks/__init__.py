@@ -15,4 +15,5 @@ from .kd_one_stage import KnowledgeDistillationSingleStageDetector
 from .redet import ReDet
 from .whollywood import WhollyWood, P2RSubnet
 from .point2rbox import Point2RBox
+from .point2rbox_v2 import Point2RBoxV2
 __all__ = []
