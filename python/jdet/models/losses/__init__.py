@@ -14,4 +14,5 @@ from .kd_loss import IMLoss
 from .rsdet_loss import RSDetLoss
 from .ridet_loss import RIDetLoss
 from .convex_giou_loss import ConvexGIoULoss
-from .point2rbox_v2_loss import GaussianOverlapLoss, gwd_sigma_loss
+from .point2rbox_v2_loss import (GaussianOverlapLoss, VoronoiWatershedLoss, EdgeLoss,
+                                 Point2RBoxV2ConsistencyLoss, gwd_sigma_loss)

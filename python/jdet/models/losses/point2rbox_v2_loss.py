@@ -134,3 +134,472 @@ class GaussianOverlapLoss(nn.Module):
         )
 
         return self.loss_weight * (loss_lamb + overlap_loss)
+
+
+def _smooth_l1(pred, target, beta, reduction='mean'):
+    """torch.nn.functional.smooth_l1_loss 等价实现（带 beta）。"""
+    diff = jt.abs(pred - target)
+    loss = jt.where(diff < beta, 0.5 * diff * diff / beta, diff - 0.5 * beta)
+    if reduction == 'mean':
+        return loss.mean()
+    elif reduction == 'sum':
+        return loss.sum()
+    return loss
+
+
+def gaussian_2d(xy, mu, sigma, normalize=False):
+    dxy = (xy - mu).unsqueeze(-1)
+    t0 = jt.exp(-0.5 * jt.matmul(dxy.permute(0, 2, 1), solve_2x2(sigma, dxy)))
+    if normalize:
+        det = sigma[..., 0, 0] * sigma[..., 1, 1] - sigma[..., 0, 1] * sigma[..., 1, 0]
+        t0 = t0 / (2 * np.pi * det.clamp(1e-7).sqrt())
+    return t0
+
+
+def sigma_to_rbox_params(sigma):
+    if not (tuple(sigma.shape) == (2, 2)):
+        raise ValueError('输入必须是一个 (2, 2) 的张量')
+    L, V = eigh_2x2(sigma)
+    W_rotated = 2 * jt.sqrt(L[1])
+    H_rotated = 2 * jt.sqrt(L[0])
+    major_axis_vector = V[:, 1]
+    angle_rad = jt.atan2(major_axis_vector[1], major_axis_vector[0])
+    return W_rotated, H_rotated, angle_rad
+
+
+def _get_box_prompt_from_gaussian(mu_j, sigma_j, sigma_scale=1, ellipse_scale_factor=1):
+    W_base, H_base, angle_rad = sigma_to_rbox_params(sigma_j)
+
+    scale_factor_from_sigma = math.sqrt(sigma_scale)
+    final_scale_factor = scale_factor_from_sigma * ellipse_scale_factor
+
+    semi_axis_a = (W_base / 2) * final_scale_factor
+    semi_axis_b = (H_base / 2) * final_scale_factor
+
+    cos_theta = jt.cos(angle_rad)
+    sin_theta = jt.sin(angle_rad)
+
+    half_width_bbox = jt.sqrt((semi_axis_a * cos_theta) ** 2 + (semi_axis_b * sin_theta) ** 2)
+    half_height_bbox = jt.sqrt((semi_axis_a * sin_theta) ** 2 + (semi_axis_b * cos_theta) ** 2)
+
+    mu_x, mu_y = mu_j[0], mu_j[1]
+    bbox_prompt = jt.stack([mu_x - half_width_bbox, mu_y - half_height_bbox,
+                            mu_x + half_width_bbox, mu_y + half_height_bbox],
+                           dim=-1).stop_grad().numpy()
+    return bbox_prompt.reshape(1, 4)
+
+
+def segment_anything(image, mu, sigma, device=None, sam_checkpoint=None, model_type=None,
+                     label=None, debug=False, mask_filter_config=None, sam_sample_rules=None):
+    """SAM 分支（v3 扩展；v2 默认 sam_instance_thr=-1 不触发）。
+
+    predictor 依赖 Agent B 的 jdet.models.sam（签名与 torch 版 mobile_sam 包一致，
+    COORD 2026-07-26 12:48 约定），SAM 数值正确性归 B。
+    """
+    if debug:
+        print('Entering SAM branch:')
+    try:
+        from jdet.models.sam import sam_model_registry, SamPredictor
+    except ImportError:
+        raise ImportError('jdet.models.sam 未就绪（由 Point2RBox-v3-jittor 提供，'
+                          '见 COORD 2026-07-26 12:48 的接口约定）')
+    from jdet.models.losses.point2rbox_v2_utils import filter_masks
+
+    img_np = (image - image.min()) / (image.max() - image.min()) * 255.0
+    img_np = img_np.permute(1, 2, 0).stop_grad().numpy().astype(np.uint8)
+
+    H, W = img_np.shape[:2]
+    J = len(mu)
+
+    if sam_checkpoint is None:
+        import os
+        for path in ['./mobile_sam.pt']:
+            if os.path.exists(path):
+                sam_checkpoint = path
+                break
+        if sam_checkpoint is None:
+            raise ValueError('未找到MobileSAM检查点，请指定sam_checkpoint参数')
+
+    if not hasattr(segment_anything, 'sam_model') or \
+            not hasattr(segment_anything, 'model_type') or \
+            segment_anything.model_type != model_type:
+        sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+        segment_anything.sam_model = sam
+        segment_anything.model_type = model_type
+    else:
+        sam = segment_anything.sam_model
+
+    predictor = SamPredictor(sam)
+    predictor.set_image(img_np)
+
+    points = mu.stop_grad().numpy()
+
+    markers = jt.full((H, W), J + 1, dtype='int32')
+
+    total_loss = 0.0
+    valid_instances = 0
+    L, V = eigh_2x2(sigma)
+    for j, point in enumerate(points):
+        if debug:
+            print(f'Processing point {j+1}/{J} at {point}')
+
+        box_prompt = None
+        all_points = [point]
+        all_labels = [1]
+
+        for k in range(J):
+            if k != j:
+                if sam_sample_rules is not None:
+                    skip = False
+                    j_label = int(label[j].item())
+                    k_label = int(label[k].item())
+                    dist = np.sqrt(((points[j] - points[k]) ** 2).sum())
+                    for filter_pair in sam_sample_rules['filter_pairs']:
+                        class_id1, class_id2, dist_thr = filter_pair
+                        if ((j_label == class_id1 and k_label == class_id2) or
+                                (j_label == class_id2 and k_label == class_id1)) \
+                                and dist < dist_thr:
+                            skip = True
+                            break
+                    if skip:
+                        continue
+                all_points.append(points[k])
+                all_labels.append(0)
+
+        masks, scores, _ = predictor.predict(
+            point_coords=np.array(all_points),
+            point_labels=np.array(all_labels),
+            box=box_prompt,
+            multimask_output=True)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        masks_processed = []
+        for mask in masks:
+            mask_opened = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+            num_labels, labels_conn, stats, centroids = \
+                cv2.connectedComponentsWithStats(mask_opened)
+            if num_labels > 1:
+                largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+                masks_processed.append(labels_conn == largest_label)
+            else:
+                masks_processed.append(mask_opened > 0)
+        masks = masks_processed
+
+        class_id = int(label[j].item())
+        best_mask_idx, metrics_values, shape_metrics = filter_masks(
+            image, masks, scores, class_id, img_np, point, mask_filter_config, debug)
+
+        mask = masks[best_mask_idx]
+        mask_np = np.asarray(mask, dtype=bool)
+        # markers[mask_tensor] = j + 1 → out-of-place
+        markers = jt.where(jt.array(mask_np), jt.full_like(markers, j + 1), markers)
+
+        ys, xs = np.nonzero(mask_np)
+        if len(xs) > 0:
+            xy = jt.array(np.stack([xs, ys], 1).astype(np.float32))
+            xy_centered = xy - mu[j]
+            xy_rotated = jt.matmul(V[j].transpose(1, 0), xy_centered[:, :, None])[:, :, 0]
+            max_x = jt.abs(xy_rotated[:, 0]).max()
+            max_y = jt.abs(xy_rotated[:, 1]).max()
+            L_target = jt.concat([max_x, max_y]) ** 2  # jt reduce 出 [1]，concat 得 (2,)
+            L_diag = diag_embed_2x2(L[j])
+            L_target_diag = diag_embed_2x2(L_target)
+            instance_loss = gwd_sigma_loss(L_diag.unsqueeze(0),
+                                           L_target_diag.unsqueeze(0).stop_grad(),
+                                           reduction='mean')
+            total_loss = total_loss + instance_loss
+            valid_instances += 1
+
+    final_loss = total_loss / max(1, valid_instances)
+    return final_loss, markers
+
+
+def voronoi_watershed_loss(mu, sigma, label, image, pos_thres=0.994, neg_thres=0.005,
+                           down_sample=2, topk=0.95, default_sigma=4096,
+                           voronoi='gaussian-orientation', alpha=0.1, debug=False):
+    J = len(sigma)
+    if J == 0:
+        return sigma.sum(), None
+    D = down_sample
+    H, W = image.shape[-2:]
+    h, w = H // D, W // D
+    x = jt.linspace(0, h, h)
+    y = jt.linspace(0, w, w)
+    # torch.meshgrid(x, y, indexing='xy') → 输出 shape (len(y), len(x))，
+    # X[i,j]=x[j], Y[i,j]=y[i]（jittor 1.3.8.5 meshgrid 无 indexing 参数，手工构造）
+    X = x[None, :].expand((w, h))
+    Y = y[:, None].expand((w, h))
+    xy = jt.stack([X, Y], -1)
+    # Get distribution for each instance
+    mm = (mu.stop_grad() / D).round()
+
+    vor_list = []
+    if voronoi == 'standard':
+        sg = jt.array(np.array([default_sigma, 0, 0, default_sigma],
+                               dtype=np.float32)).reshape(2, 2)
+        sg = sg / D ** 2
+        for j in range(J):
+            vor_list.append(gaussian_2d(xy.view(-1, 2), mm[j][None], sg[None]).view(h, w))
+    elif voronoi == 'gaussian-orientation':
+        L, V = eigh_2x2(sigma)
+        L = L.stop_grad().clone()
+        L = L / (L[:, 0:1] * L[:, 1:2]).sqrt() * default_sigma
+        sg = jt.matmul(jt.matmul(V, diag_embed_2x2(L)), V.permute(0, 2, 1)).stop_grad()
+        sg = sg / D ** 2
+        for j in range(J):
+            vor_list.append(gaussian_2d(xy.view(-1, 2), mm[j][None], sg[j][None]).view(h, w))
+    elif voronoi == 'gaussian-full':
+        sg = sigma.stop_grad() / D ** 2
+        for j in range(J):
+            vor_list.append(gaussian_2d(xy.view(-1, 2), mm[j][None], sg[j][None]).view(h, w))
+    vor = jt.stack(vor_list, 0)
+    # val: max prob, vor: belong to which instance
+    vor_idx, val = jt.argmax(vor, 0)
+    vor = vor_idx
+    if D > 1:
+        vor = vor[:, None, :, None].expand((h, D, w, D)).reshape(H, W)
+        val = nn.interpolate(val[None, None], size=(H, W), mode='bilinear',
+                             align_corners=True)[0, 0]
+    cls = label[vor]
+    kernel = jt.ones((1, 1, 3, 3), dtype=val.dtype)
+    kernel[0, 0, 1, 1] = -8
+    ridges = nn.conv2d(vor[None].float().unsqueeze(0), kernel, padding=1)[0, 0] != 0
+    vor = vor + 1
+    if not isinstance(pos_thres, jt.Var):
+        pos_thres = jt.array(np.asarray(pos_thres, dtype=np.float32))
+    if not isinstance(neg_thres, jt.Var):
+        neg_thres = jt.array(np.asarray(neg_thres, dtype=np.float32))
+    # 上游三连 in-place：vor[val<pos]=0 → vor[val<neg]=J+1 → vor[ridges]=J+1
+    # （顺序敏感，neg 是 pos 的子集、ridges 最后覆盖）→ out-of-place 等价
+    vor = jt.where(val < pos_thres[cls], jt.zeros_like(vor), vor)
+    vor = jt.where(val < neg_thres[cls], jt.full_like(vor, J + 1), vor)
+    vor = jt.where(ridges, jt.full_like(vor, J + 1), vor)
+
+    # PyTorch/Jittor 不支持 watershed，用 cv2（CPU、无梯度路径）
+    img_uint8 = (image - image.min()) / (image.max() - image.min()) * 255
+    img_uint8 = img_uint8.permute(1, 2, 0).stop_grad().numpy().astype(np.uint8)
+    img_uint8 = cv2.medianBlur(img_uint8, 3)
+    markers = vor.stop_grad().numpy().astype(np.int32)
+    markers = jt.array(cv2.watershed(img_uint8, markers))
+
+    L, V = eigh_2x2(sigma)
+    L_target = []
+    for j in range(J):
+        m = (markers == j + 1)
+        idx = jt.nonzero(m)
+        if idx.shape[0] == 0:
+            L_target.append(L[j].stop_grad())
+            continue
+        xy_j = jt.stack([idx[:, 1], idx[:, 0]], -1).float()
+        xy_j = xy_j - mu[j]
+        xy_j = jt.matmul(V[j].transpose(1, 0), xy_j[:, :, None])[:, :, 0]
+        max_x = jt.abs(xy_j[:, 0]).max()
+        max_y = jt.abs(xy_j[:, 1]).max()
+        L_target.append(jt.concat([max_x, max_y]) ** 2)  # jt reduce 出 [1]，concat 得 (2,)
+    L_target = jt.stack(L_target)
+    L = diag_embed_2x2(L)
+    L_target = diag_embed_2x2(L_target)
+    loss = gwd_sigma_loss(L, L_target.stop_grad(), reduction='none')
+    # torch.topk(largest=False)[0].mean() → 升序排序取前 k
+    k = int(np.ceil(loss.shape[0] * topk))
+    sort_idx, sorted_loss = jt.argsort(loss)
+    loss = sorted_loss[:k].mean()
+    return loss, (vor, markers)
+
+
+def get_loss_from_mask(mu, sigma, label, image, pos_thres, neg_thres, down_sample=2,
+                       topk=0.95, default_sigma=4096, voronoi='gaussian-orientation',
+                       alpha=0.1, debug=False, mask_filter_config=None,
+                       sam_checkpoint='./mobile_sam.pt', model_type='vit_t',
+                       sam_instance_thr=-1, device=None, sam_sample_rules=None):
+    J = len(sigma)
+    if J == 0:
+        return sigma.sum(), None
+    if J <= sam_instance_thr:
+        loss, markers = segment_anything(
+            image, mu, sigma,
+            device=device,
+            sam_checkpoint=sam_checkpoint,
+            model_type=model_type,
+            label=label,
+            debug=debug,
+            mask_filter_config=mask_filter_config,
+            sam_sample_rules=sam_sample_rules)
+        vor = markers.clone()
+        return loss, (vor, markers)
+    else:
+        loss, (vor, markers) = voronoi_watershed_loss(
+            mu, sigma, label, image,
+            pos_thres, neg_thres, down_sample, topk,
+            default_sigma, voronoi, alpha,
+            debug=debug)
+        return loss, (vor, markers)
+
+
+@LOSSES.register_module()
+class VoronoiWatershedLoss(nn.Module):
+    """VoronoiWatershedLoss（官方 config：loss_weight=5.0, voronoi='standard'）。
+
+    v3 扩展参数（mask_filter_config/sam_instance_thr/sam_sample_rules/
+    use_class_specific_watershed）默认值即 v2 行为。
+    """
+
+    def __init__(self,
+                 loss_weight=1.0,
+                 down_sample=2,
+                 topk=0.95,
+                 alpha=0.1,
+                 default_sigma=4096,
+                 debug=False,
+                 mask_filter_config=None,
+                 sam_instance_thr=-1,
+                 sam_sample_rules=None,
+                 use_class_specific_watershed=False):
+        super(VoronoiWatershedLoss, self).__init__()
+        self.loss_weight = loss_weight
+        self.down_sample = down_sample
+        self.topk = topk
+        self.alpha = alpha
+        self.default_sigma = default_sigma
+        self.debug = debug
+        self.mask_filter_config = mask_filter_config
+        self.sam_instance_thr = sam_instance_thr
+        self.sam_sample_rules = sam_sample_rules
+        self.use_class_specific_watershed = use_class_specific_watershed
+        self.vis = None
+
+    def execute(self, pred, label, image, pos_thres, neg_thres, voronoi='orientation'):
+        loss, self.vis = get_loss_from_mask(
+            *pred,
+            label,
+            image,
+            pos_thres,
+            neg_thres,
+            self.down_sample,
+            default_sigma=self.default_sigma,
+            topk=self.topk,
+            voronoi=voronoi,
+            alpha=self.alpha,
+            debug=self.debug,
+            mask_filter_config=self.mask_filter_config,
+            sam_instance_thr=self.sam_instance_thr,
+            sam_sample_rules=self.sam_sample_rules)
+        return self.loss_weight * loss
+
+
+def rbbox2roi(bbox_list):
+    """list of (N_i, 5+) rboxes → (N, 6) rois [batch_ind, cx, cy, w, h, a]。"""
+    rois_list = []
+    for img_id, bboxes in enumerate(bbox_list):
+        if bboxes.shape[0] > 0:
+            img_inds = jt.full((bboxes.shape[0], 1), img_id, dtype=bboxes.dtype)
+            rois = jt.concat([img_inds, bboxes[:, :5]], dim=-1)
+        else:
+            rois = jt.zeros((0, 6), dtype=bboxes.dtype)
+        rois_list.append(rois)
+    rois = jt.concat(rois_list, 0)
+    return rois
+
+
+@LOSSES.register_module()
+class EdgeLoss(nn.Module):
+    """Edge Loss（官方 config：loss_weight=0.3）。"""
+
+    def __init__(self,
+                 resolution=24,
+                 max_scale=1.6,
+                 sigma=6,
+                 reduction='mean',
+                 loss_weight=1.0,
+                 debug=False):
+        super(EdgeLoss, self).__init__()
+        self.resolution = resolution
+        self.max_scale = max_scale
+        self.sigma = sigma
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+        self.center_idx = self.resolution / self.max_scale
+        self.debug = debug
+
+        from jdet.models.roi_extractors.rotated_single_level import \
+            RotatedSingleRoIExtractor
+        self.roi_extractor = RotatedSingleRoIExtractor(
+            roi_layer=dict(
+                type='RoIAlignRotated',
+                out_size=(2 * self.resolution + 1),
+                sample_num=2,
+                clockwise=True),
+            out_channels=1,
+            featmap_strides=[1],
+            finest_scale=1024)
+
+        edge_idx = jt.arange(0, self.resolution + 1).float()
+        edge_distribution = jt.exp(-((edge_idx - self.center_idx) ** 2) / (2 * self.sigma ** 2))
+        edge_distribution[0] = 0
+        edge_distribution[-1] = 0
+        self.edge_idx = edge_idx.stop_grad()
+        self.edge_distribution = edge_distribution.stop_grad()
+
+    def execute(self, pred, edge):
+        G = self.resolution
+        C = self.center_idx
+        roi = rbbox2roi(pred)
+        # roi[:, 3:5] *= max_scale → out-of-place
+        roi = jt.concat([roi[:, :3], roi[:, 3:5] * self.max_scale, roi[:, 5:6]], dim=1)
+        feat = self.roi_extractor([edge], roi)
+        if feat.shape[0] == 0:
+            return jt.zeros(1).sum()
+        featx = feat.sum(1).abs().sum(1)
+        featy = feat.sum(1).abs().sum(2)
+        featx2 = featx[:, :G + 1].flip(-1) + featx[:, G:]
+        featy2 = featy[:, :G + 1].flip(-1) + featy[:, G:]  # (N, 25)
+        ex = (nn.softmax(featx2 * self.edge_distribution, dim=1) * self.edge_idx).sum(1) / C
+        ey = (nn.softmax(featy2 * self.edge_distribution, dim=1) * self.edge_idx).sum(1) / C
+        exy = jt.stack([ex, ey], -1)
+        rbbox_concat = jt.concat(pred, 0)
+
+        return self.loss_weight * _smooth_l1(rbbox_concat[:, 2:4],
+                                             (rbbox_concat[:, 2:4] * exy).stop_grad(),
+                                             beta=8)
+
+
+@LOSSES.register_module()
+class Point2RBoxV2ConsistencyLoss(nn.Module):
+    """Consistency Loss（官方 config：loss_weight=1.0）。"""
+
+    def __init__(self,
+                 reduction='mean',
+                 loss_weight=1.0):
+        super(Point2RBoxV2ConsistencyLoss, self).__init__()
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def execute(self, ori_pred, trs_pred, square_mask, aug_type, aug_val):
+        ori_gaus, ori_angle = ori_pred
+        trs_gaus, trs_angle = trs_pred
+
+        if aug_type == 'rot':
+            rot = jt.array(np.asarray(aug_val, dtype=np.float32))
+            cos_r = jt.cos(rot)
+            sin_r = jt.sin(rot)
+            R = jt.stack((cos_r, -sin_r, sin_r, cos_r), dim=-1).reshape(-1, 2, 2)
+            ori_gaus = jt.matmul(jt.matmul(R, ori_gaus), R.permute(0, 2, 1))
+            d_ang = trs_angle - ori_angle - aug_val
+        elif aug_type == 'flp':
+            ori_gaus = ori_gaus * jt.array(
+                np.array([1, -1, -1, 1], dtype=np.float32)).reshape(2, 2)
+            d_ang = trs_angle + ori_angle
+        else:
+            sca = jt.array(np.asarray(aug_val, dtype=np.float32))
+            ori_gaus = ori_gaus * sca
+            d_ang = trs_angle - ori_angle
+
+        loss_ssg = gwd_sigma_loss(jt.matmul(ori_gaus, ori_gaus),
+                                  jt.matmul(trs_gaus, trs_gaus))
+        d_ang = (d_ang + math.pi / 2) % math.pi - math.pi / 2
+        loss_ssa = _smooth_l1(d_ang, jt.zeros_like(d_ang), beta=0.1, reduction='none')
+        # loss_ssa[~square_mask].sum() / max(1, (~square_mask).sum()) → out-of-place
+        keep = (jt.logical_not(square_mask)).float()
+        loss_ssa = (loss_ssa * keep).sum() / jt.maximum(keep.sum(), jt.float32(1.0))
+
+        return self.loss_weight * (loss_ssg + loss_ssa)

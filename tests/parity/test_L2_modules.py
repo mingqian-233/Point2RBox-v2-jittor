@@ -132,3 +132,86 @@ class TestGwdSigmaLoss:
         assert rel < 1e-4, f'forward rel err = {rel}'
         grad = jt.grad(loss, a)
         _assert_close(grad.numpy(), g['gws_grad'], 1e-3, 'gws_grad')
+
+
+class TestVoronoiWatershedLoss:
+    """M3 §2：官方路径 voronoi='standard', w=5.0（watershed 走 cv2，两边共享）。"""
+
+    def test_forward_grad_and_markers(self):
+        import jittor as jt
+        from jdet.models.losses.point2rbox_v2_loss import VoronoiWatershedLoss
+
+        g = np.load(os.path.join(GOLDEN, 'p2rv2_loss.npz'))
+        loss_fn = VoronoiWatershedLoss(loss_weight=5.0)
+        mu = jt.array(g['vws_mu'])
+        sigma = jt.array(g['vws_sigma'])
+        loss = loss_fn((mu, sigma), jt.array(g['vws_label']), jt.array(g['vws_image']),
+                       jt.array(g['vws_pos']), jt.array(g['vws_neg']),
+                       voronoi='standard')
+        # markers（watershed 结果）应逐像素一致（输入图完全相同时 cv2 确定性）
+        markers = loss_fn.vis[1].numpy()
+        mismatch = (markers != g['vws_markers']).mean()
+        assert mismatch < 0.001, f'markers 不一致像素比例 = {mismatch}'
+        rel = abs(float(loss.item()) - float(g['vws_loss'])) / abs(float(g['vws_loss']))
+        assert rel < 1e-3, f'forward rel err = {rel}'
+        gs = jt.grad(loss, sigma).numpy()
+        assert np.abs(gs).sum() > 0, 'sigma 梯度全 0'
+        # w==h 各向同性行：eigh 特征基任意 → 逐特征值子梯度在 a/c 间的分配不唯一
+        # （torch 选 I 基），只比基无关的 trace；非简并行逐位比
+        sg = g['vws_sigma']
+        tr = sg[:, 0, 0] + sg[:, 1, 1]
+        disc = np.sqrt(((sg[:, 0, 0] - sg[:, 1, 1]) / 2) ** 2 + sg[:, 0, 1] ** 2)
+        nondeg = disc / (tr / 2) > 1e-3
+        want = g['vws_sigma_grad']
+        _assert_close(gs[nondeg], want[nondeg], 1e-2, 'vws_sigma_grad(nondeg)')
+        np.testing.assert_allclose(gs[~nondeg, 0, 0] + gs[~nondeg, 1, 1],
+                                   want[~nondeg, 0, 0] + want[~nondeg, 1, 1],
+                                   rtol=1e-2, err_msg='vws_sigma_grad(trace)')
+
+
+class TestEdgeLoss:
+    def test_forward_grad(self):
+        import jittor as jt
+        from jdet.models.losses.point2rbox_v2_loss import EdgeLoss
+
+        g = np.load(os.path.join(GOLDEN, 'p2rv2_loss.npz'))
+        jt.flags.use_cuda = 1  # RoIAlignRotated 只有 CUDA 实现
+        loss_fn = EdgeLoss(loss_weight=0.3)
+        b = jt.array(g['edge_boxes'])
+        loss = loss_fn([b], jt.array(g['edge_map']))
+        rel = abs(float(loss.item()) - float(g['edge_loss'])) / abs(float(g['edge_loss']))
+        grad = jt.grad(loss, b)
+        jt.flags.use_cuda = 0
+        assert rel < 1e-3, f'forward rel err = {rel}'
+        assert np.abs(grad.numpy()).sum() > 0, '梯度全 0'
+        _assert_close(grad.numpy(), g['edge_grad'], 1e-2, 'edge_grad')
+
+
+class TestConsistencyLoss:
+    def _run(self, aug_type, aug_val):
+        import jittor as jt
+        from jdet.models.losses.point2rbox_v2_loss import Point2RBoxV2ConsistencyLoss
+
+        g = np.load(os.path.join(GOLDEN, 'p2rv2_loss.npz'))
+        loss_fn = Point2RBoxV2ConsistencyLoss(loss_weight=1.0)
+        go = jt.array(g['con_gaus_o'])
+        gt_ = jt.array(g['con_gaus_t'])
+        ao = jt.array(g['con_ang_o'])
+        at = jt.array(g['con_ang_t'])
+        loss = loss_fn((go, ao), (gt_, at), jt.array(g['con_sq']), aug_type, aug_val)
+        want = float(g[f'con_{aug_type}_loss'])
+        rel = abs(float(loss.item()) - want) / abs(want)
+        assert rel < 1e-4, f'{aug_type} forward rel err = {rel}'
+        ggo, gao = jt.grad(loss, [go, ao])
+        assert np.abs(ggo.numpy()).sum() > 0
+        _assert_close(ggo.numpy(), g[f'con_{aug_type}_go_grad'], 1e-3, f'{aug_type}_go_grad')
+        _assert_close(gao.numpy(), g[f'con_{aug_type}_ao_grad'], 1e-3, f'{aug_type}_ao_grad')
+
+    def test_rot(self):
+        self._run('rot', 0.6)
+
+    def test_flp(self):
+        self._run('flp', 0.0)
+
+    def test_sca(self):
+        self._run('sca', 1.3)
