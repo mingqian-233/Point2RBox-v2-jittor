@@ -19,7 +19,16 @@ from jittor.nn import grid_sample
 
 from jdet.utils.registry import MODELS, BACKBONES, HEADS, NECKS, build_from_cfg
 
-from third_parties.ted.ted import TED
+try:
+    from third_parties.ted.ted import TED
+except ImportError:  # tools/run_net.py 只把 tools/ 放进 sys.path，补仓库根
+    import os as _os
+    import sys as _sys
+    _repo_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__),
+                                                '../../../..'))
+    if _repo_root not in _sys.path:
+        _sys.path.insert(0, _repo_root)
+    from third_parties.ted.ted import TED
 
 
 def get_single_pattern(image, bbox, label, square_cls):

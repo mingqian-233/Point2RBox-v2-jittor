@@ -71,3 +71,137 @@ class TestGoldenIntegrity:
 class TestConfigParity:
     def test_pointwise(self):
         raise NotImplementedError  # M4 实现：加载 Jittor config → 映射 → 与 golden 全键零容差
+
+
+def _load_jt_config(path):
+    ns = {}
+    with open(path) as f:
+        exec(compile(f.read(), path, 'exec'), ns)
+    return ns
+
+
+class TestJittorConfigParity:
+    """Jittor config ↔ 官方 golden 逐值比对（§6.1 勾选表的可执行形式）。
+
+    允许差异仅限铁律一的三类：registry 类名、config 语法、数据路径写法。
+    """
+
+    @pytest.fixture(scope='class')
+    def cfg(self):
+        path = os.path.join(os.path.dirname(__file__), '..', '..',
+                            'configs', 'point2rbox_v2', 'point2rbox_v2_1x_dota.py')
+        return _load_jt_config(path)
+
+    @pytest.fixture(scope='class')
+    def g(self):
+        return load_golden('config_point2rbox_v2-1x-dota.json')
+
+    def test_model_detector(self, cfg, g):
+        m = cfg['model']
+        assert list(m['ss_prob']) == [g[f'model.ss_prob[{i}]'] for i in range(3)]
+        assert m['copy_paste_start_epoch'] == g['model.copy_paste_start_epoch']
+        dp = m['data_preprocessor']
+        for i in range(3):
+            assert dp['mean'][i] == g[f'model.data_preprocessor.mean[{i}]']
+            assert dp['std'][i] == g[f'model.data_preprocessor.std[{i}]']
+        assert dp['bgr_to_rgb'] == g['model.data_preprocessor.bgr_to_rgb']
+        assert dp['pad_size_divisor'] == g['model.data_preprocessor.pad_size_divisor']
+        assert dp['boxtype2tensor'] == g['model.data_preprocessor.boxtype2tensor']
+
+    def test_model_backbone_neck(self, cfg, g):
+        b = cfg['model']['backbone']
+        # out_indices=(1,2,3) ↔ return_stages layer2/3/4（类名/写法映射）
+        assert [g[f'model.backbone.out_indices[{i}]'] for i in
+                range(g['model.backbone.out_indices.__len__'])] == [1, 2, 3]
+        assert b['return_stages'] == ['layer2', 'layer3', 'layer4']
+        assert b['frozen_stages'] == g['model.backbone.frozen_stages']
+        assert b['norm_eval'] == g['model.backbone.norm_eval']
+        n = cfg['model']['neck']
+        assert n['in_channels'] == [g[f'model.neck.in_channels[{i}]'] for i in range(3)]
+        assert n['out_channels'] == g['model.neck.out_channels']
+        assert n['start_level'] == g['model.neck.start_level']
+        assert n['num_outs'] == g['model.neck.num_outs']
+        assert n['add_extra_convs'] == g['model.neck.add_extra_convs']
+        assert n['relu_before_extra_convs'] == g['model.neck.relu_before_extra_convs']
+
+    def test_model_head(self, cfg, g):
+        h = cfg['model']['bbox_head']
+        assert h['num_classes'] == g['model.bbox_head.num_classes']
+        assert h['in_channels'] == g['model.bbox_head.in_channels']
+        assert h['feat_channels'] == g['model.bbox_head.feat_channels']
+        assert h['strides'] == [g['model.bbox_head.strides[0]']]
+        assert g['model.bbox_head.strides.__len__'] == 1
+        assert h['edge_loss_start_epoch'] == g['model.bbox_head.edge_loss_start_epoch']
+        assert h['joint_angle_start_epoch'] == g['model.bbox_head.joint_angle_start_epoch']
+        assert h['voronoi_type'] == g['model.bbox_head.voronoi_type']
+        assert h['square_cls'] == [g[f'model.bbox_head.square_cls[{i}]'] for i in range(3)]
+        assert h['edge_loss_cls'] == [g[f'model.bbox_head.edge_loss_cls[{i}]']
+                                      for i in range(g['model.bbox_head.edge_loss_cls.__len__'])]
+        assert h['post_process'] == {11: 1.2}
+        vt = h['voronoi_thres']
+        assert vt['default'] == [g['model.bbox_head.voronoi_thres.default[0]'],
+                                 g['model.bbox_head.voronoi_thres.default[1]']]
+        ac = h['angle_coder']
+        assert ac['angle_version'] == g['model.bbox_head.angle_coder.angle_version']
+        assert ac['dual_freq'] == g['model.bbox_head.angle_coder.dual_freq']
+        assert ac['num_step'] == g['model.bbox_head.angle_coder.num_step']
+        assert ac['thr_mod'] == g['model.bbox_head.angle_coder.thr_mod']
+
+    def test_model_losses(self, cfg, g):
+        h = cfg['model']['bbox_head']
+        assert h['loss_cls']['gamma'] == g['model.bbox_head.loss_cls.gamma']
+        assert h['loss_cls']['alpha'] == g['model.bbox_head.loss_cls.alpha']
+        assert h['loss_cls']['loss_weight'] == g['model.bbox_head.loss_cls.loss_weight']
+        assert h['loss_cls']['use_sigmoid'] == g['model.bbox_head.loss_cls.use_sigmoid']
+        assert h['loss_bbox']['loss_weight'] == g['model.bbox_head.loss_bbox.loss_weight']
+        assert h['loss_overlap']['loss_weight'] == g['model.bbox_head.loss_overlap.loss_weight']
+        assert h['loss_overlap']['lamb'] == g['model.bbox_head.loss_overlap.lamb']
+        assert h['loss_voronoi']['loss_weight'] == g['model.bbox_head.loss_voronoi.loss_weight']
+        assert h['loss_bbox_edg']['loss_weight'] == g['model.bbox_head.loss_bbox_edg.loss_weight']
+        assert h['loss_ss']['loss_weight'] == g['model.bbox_head.loss_ss.loss_weight']
+
+    def test_test_cfg(self, cfg, g):
+        t = cfg['model']['bbox_head']['test_cfg']
+        assert t['nms_pre'] == g['model.test_cfg.nms_pre']
+        assert t['min_bbox_size'] == g['model.test_cfg.min_bbox_size']
+        assert t['score_thr'] == g['model.test_cfg.score_thr']
+        assert t['nms']['iou_threshold'] == g['model.test_cfg.nms.iou_threshold']
+        assert t['max_per_img'] == g['model.test_cfg.max_per_img']
+
+    def test_dataloaders(self, cfg, g):
+        d = cfg['dataset']
+        assert d['train']['batch_size'] == g['train_dataloader.batch_size']
+        assert d['train']['num_workers'] == g['train_dataloader.num_workers']
+        assert d['val']['batch_size'] == g['val_dataloader.batch_size']
+        assert d['test']['batch_size'] == g['test_dataloader.batch_size']
+        assert d['train']['filter_empty_gt'] is True
+        # 铁律二 #4：val 指向 trainval
+        assert 'trainval' in d['val']['images_dir']
+        # pipeline 关键值
+        tr = {t['type']: t for t in d['train']['transforms']}
+        assert tr['MMRotateRandomFlip']['prob'] == 0.75
+        assert tr['MMRotateRandomFlip']['direction'] == \
+            ['horizontal', 'vertical', 'diagonal']
+        assert tr['Pad']['size_divisor'] == 32
+        assert d['train']['point_proportion'] == 1.0
+        assert d['train']['hbox_proportion'] == 0.0
+
+    def test_optimizer_scheduler_epochs(self, cfg, g):
+        o = cfg['optimizer']
+        assert o['type'] == 'AdamW'
+        assert o['lr'] == g['optim_wrapper.optimizer.lr']
+        assert tuple(o['betas']) == (g['optim_wrapper.optimizer.betas[0]'],
+                                     g['optim_wrapper.optimizer.betas[1]'])
+        assert o['weight_decay'] == g['optim_wrapper.optimizer.weight_decay']
+        assert o['grad_clip']['max_norm'] == g['optim_wrapper.clip_grad.max_norm']
+        assert o['grad_clip']['norm_type'] == g['optim_wrapper.clip_grad.norm_type']
+        s = cfg['scheduler']
+        assert s['start_factor'] == pytest.approx(g['param_scheduler[0].start_factor'])
+        assert s['warmup_iters'] == g['param_scheduler[0].end']
+        assert s['milestones'] == [g['param_scheduler[1].milestones[0]'],
+                                   g['param_scheduler[1].milestones[1]']]
+        assert s['gamma'] == g['param_scheduler[1].gamma']
+        assert cfg['max_epoch'] == g['train_cfg.max_epochs']
+        assert cfg['eval_interval'] == g['train_cfg.val_interval']
+        assert cfg['checkpoint_interval'] == 1
+        assert cfg['log_interval'] == 50
