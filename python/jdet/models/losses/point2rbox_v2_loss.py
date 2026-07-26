@@ -683,3 +683,29 @@ class MMDetFocalLoss(nn.Module):
             loss = loss * weight
         loss = weight_reduce_loss(loss, None, reduction, avg_factor)
         return self.loss_weight * loss
+
+
+@LOSSES.register_module()
+class MMDetCrossEntropyLoss(nn.Module):
+    """mmdet CrossEntropyLoss(use_sigmoid=True) 的 Jittor 等价（centerness 用）。
+
+    binary_cross_entropy_with_logits + mmdet weight_reduce 语义
+    （底座 CrossEntropyLoss 的 avg_factor/加权语义不同，不复用）。
+    """
+
+    def __init__(self, use_sigmoid=True, reduction='mean', loss_weight=1.0):
+        super(MMDetCrossEntropyLoss, self).__init__()
+        assert use_sigmoid is True, '本移植只覆盖 sigmoid 分支（stage-2 centerness）'
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def execute(self, pred, target, weight=None, avg_factor=None,
+                reduction_override=None):
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = reduction_override if reduction_override else self.reduction
+        target = target.float32()
+        # BCE with logits（数值稳定形式）
+        loss = jt.maximum(pred, jt.zeros_like(pred)) - pred * target \
+            + jt.log(1 + jt.exp(-jt.abs(pred)))
+        loss = weight_reduce_loss(loss, weight, reduction, avg_factor)
+        return self.loss_weight * loss
