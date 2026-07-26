@@ -171,7 +171,10 @@ class TestJittorConfigParity:
     def test_dataloaders(self, cfg, g):
         d = cfg['dataset']
         assert d['train']['batch_size'] == g['train_dataloader.batch_size']
-        assert d['train']['num_workers'] == g['train_dataloader.num_workers']
+        # [plan-deviation] 官方 num_workers=2；jittor 多进程 dataloader 环形缓冲
+        # 死锁（见 docs/porting_notes.md），改 0。纯加载性能参数，数值语义不变。
+        assert g['train_dataloader.num_workers'] == 2
+        assert d['train']['num_workers'] == 0
         assert d['val']['batch_size'] == g['val_dataloader.batch_size']
         assert d['test']['batch_size'] == g['test_dataloader.batch_size']
         assert d['train']['filter_empty_gt'] is True

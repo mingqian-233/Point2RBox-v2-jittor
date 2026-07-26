@@ -232,7 +232,7 @@ def segment_anything(image, mu, sigma, device=None, sam_checkpoint=None, model_t
     predictor = SamPredictor(sam)
     predictor.set_image(img_np)
 
-    points = mu.stop_grad().numpy()
+    points = mu.detach().numpy()
 
     markers = jt.full((H, W), J + 1, dtype='int32')
 
@@ -331,31 +331,48 @@ def voronoi_watershed_loss(mu, sigma, label, image, pos_thres=0.994, neg_thres=0
     Y = y[:, None].expand((w, h))
     xy = jt.stack([X, Y], -1)
     # Get distribution for each instance
-    mm = (mu.stop_grad() / D).round()
+    mm = (mu.detach() / D).round()
 
-    vor_list = []
+    # 逐实例 python 循环在 jittor 惰性模式下会积出 O(J) 巨图（密集图 J 可达数千，
+    # 图融合优化超线性爆炸，单 batch 卡数十分钟）。该路径全为 detach 量 →
+    # 改分块批量化 + 增量 argmax，公式与 gaussian_2d 完全一致（二次型展开）。
     if voronoi == 'standard':
-        sg = jt.array(np.array([default_sigma, 0, 0, default_sigma],
-                               dtype=np.float32)).reshape(2, 2)
+        sg = jt.array(np.array([[default_sigma, 0], [0, default_sigma]],
+                               dtype=np.float32))[None].expand((J, 2, 2))
         sg = sg / D ** 2
-        for j in range(J):
-            vor_list.append(gaussian_2d(xy.view(-1, 2), mm[j][None], sg[None]).view(h, w))
     elif voronoi == 'gaussian-orientation':
         L, V = eigh_2x2(sigma)
-        L = L.stop_grad().clone()
+        L = L.detach()
         L = L / (L[:, 0:1] * L[:, 1:2]).sqrt() * default_sigma
-        sg = jt.matmul(jt.matmul(V, diag_embed_2x2(L)), V.permute(0, 2, 1)).stop_grad()
+        sg = jt.matmul(jt.matmul(V, diag_embed_2x2(L)), V.permute(0, 2, 1)).detach()
         sg = sg / D ** 2
-        for j in range(J):
-            vor_list.append(gaussian_2d(xy.view(-1, 2), mm[j][None], sg[j][None]).view(h, w))
     elif voronoi == 'gaussian-full':
-        sg = sigma.stop_grad() / D ** 2
-        for j in range(J):
-            vor_list.append(gaussian_2d(xy.view(-1, 2), mm[j][None], sg[j][None]).view(h, w))
-    vor = jt.stack(vor_list, 0)
-    # val: max prob, vor: belong to which instance
-    vor_idx, val = jt.argmax(vor, 0)
-    vor = vor_idx
+        sg = sigma.detach() / D ** 2
+
+    from jdet.ops.linalg2x2 import inv_2x2
+    inv_sg = inv_2x2(sg.detach())  # (J,2,2)
+    xy_flat = xy.view(-1, 2)          # (hw,2)
+    hw = xy_flat.shape[0]
+    best_val = jt.full((hw,), -1.0)
+    best_idx = jt.zeros((hw,), dtype='int32')
+    CHUNK = 256
+    for start in range(0, J, CHUNK):
+        end = min(start + CHUNK, J)
+        mu_c = mm[start:end]                       # (C,2)
+        ic = inv_sg[start:end]                     # (C,2,2)
+        dx = xy_flat[None, :, 0] - mu_c[:, 0:1]    # (C,hw)
+        dy = xy_flat[None, :, 1] - mu_c[:, 1:2]
+        q = ic[:, 0, 0][:, None] * dx * dx \
+            + (ic[:, 0, 1] + ic[:, 1, 0])[:, None] * dx * dy \
+            + ic[:, 1, 1][:, None] * dy * dy
+        t0 = jt.exp(-0.5 * q)                      # (C,hw)
+        idx_local, vmax_c = jt.argmax(t0, 0)
+        update = vmax_c > best_val                 # 平局保留更早 chunk（与 stack+argmax 一致）
+        best_idx = jt.where(update, (idx_local + start).int32(), best_idx)
+        best_val = jt.where(update, vmax_c, best_val)
+        best_idx.sync(); best_val.sync()           # 分块落地，图规模有界
+    vor = best_idx.view(h, w)
+    val = best_val.view(h, w)
     if D > 1:
         vor = vor[:, None, :, None].expand((h, D, w, D)).reshape(H, W)
         val = nn.interpolate(val[None, None], size=(H, W), mode='bilinear',
@@ -383,20 +400,23 @@ def voronoi_watershed_loss(mu, sigma, label, image, pos_thres=0.994, neg_thres=0
     markers = jt.array(cv2.watershed(img_uint8, markers))
 
     L, V = eigh_2x2(sigma)
-    L_target = []
+    # L_target 在上游即整体 detach（loss 用 L_target.detach()）→ 全程 numpy 计算，
+    # 避免 O(J) 逐实例 jt 子图（同上，J 大时惰性图爆炸）
+    markers_np = markers.detach().numpy()
+    mu_np = mu.detach().numpy()
+    V_np = V.detach().numpy()
+    L_np = L.detach().numpy()
+    L_target_np = np.empty((J, 2), dtype=np.float32)
     for j in range(J):
-        m = (markers == j + 1)
-        idx = jt.nonzero(m)
-        if idx.shape[0] == 0:
-            L_target.append(L[j].stop_grad())
+        ys, xs = np.nonzero(markers_np == j + 1)
+        if len(xs) == 0:
+            L_target_np[j] = L_np[j]
             continue
-        xy_j = jt.stack([idx[:, 1], idx[:, 0]], -1).float()
-        xy_j = xy_j - mu[j]
-        xy_j = jt.matmul(V[j].transpose(1, 0), xy_j[:, :, None])[:, :, 0]
-        max_x = jt.abs(xy_j[:, 0]).max()
-        max_y = jt.abs(xy_j[:, 1]).max()
-        L_target.append(jt.concat([max_x, max_y]) ** 2)  # jt reduce 出 [1]，concat 得 (2,)
-    L_target = jt.stack(L_target)
+        xy_j = np.stack([xs, ys], 1).astype(np.float32) - mu_np[j]
+        xy_j = xy_j @ V_np[j]  # (V^T x)^T = x^T V
+        L_target_np[j, 0] = np.abs(xy_j[:, 0]).max() ** 2
+        L_target_np[j, 1] = np.abs(xy_j[:, 1]).max() ** 2
+    L_target = jt.array(L_target_np)
     L = diag_embed_2x2(L)
     L_target = diag_embed_2x2(L_target)
     loss = gwd_sigma_loss(L, L_target.stop_grad(), reduction='none')
