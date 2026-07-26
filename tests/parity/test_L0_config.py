@@ -208,3 +208,62 @@ class TestJittorConfigParity:
         assert cfg['eval_interval'] == g['train_cfg.val_interval']
         assert cfg['checkpoint_interval'] == 1
         assert cfg['log_interval'] == 50
+
+
+class TestStage2ConfigParity:
+    """stage-2 Jittor config ↔ 官方 rotated-fcos golden 逐值比对（§6.3 勾选表）。"""
+
+    @pytest.fixture(scope='class')
+    def cfg(self):
+        path = os.path.join(os.path.dirname(__file__), '..', '..',
+                            'configs', 'point2rbox_v2',
+                            'rotated_fcos_1x_dota_using_pseudo.py')
+        return _load_jt_config(path)
+
+    @pytest.fixture(scope='class')
+    def g(self):
+        return load_golden('config_rotated-fcos-1x-dota-using-pseudo.json')
+
+    def test_backbone_neck(self, cfg, g):
+        b = cfg['model']['backbone']
+        assert [g[f'model.backbone.out_indices[{i}]'] for i in range(4)] == [0, 1, 2, 3]
+        assert b['return_stages'] == ['layer1', 'layer2', 'layer3', 'layer4']
+        n = cfg['model']['neck']
+        assert n['in_channels'] == [g[f'model.neck.in_channels[{i}]'] for i in range(4)]
+        assert n['out_channels'] == g['model.neck.out_channels'] == 512
+        assert n['start_level'] == g['model.neck.start_level']
+        assert n['num_outs'] == g['model.neck.num_outs']
+
+    def test_head(self, cfg, g):
+        h = cfg['model']['roi_heads']
+        assert h['num_classes'] == g['model.bbox_head.num_classes']
+        assert h['in_channels'] == g['model.bbox_head.in_channels'] == 512
+        assert h['feat_channels'] == g['model.bbox_head.feat_channels']
+        assert h['stacked_convs'] == g['model.bbox_head.stacked_convs']
+        assert h['strides'] == [g[f'model.bbox_head.strides[{i}]'] for i in range(5)]
+        assert h['center_sampling'] == g['model.bbox_head.center_sampling']
+        assert h['center_sample_radius'] == g['model.bbox_head.center_sample_radius']
+        assert h['norm_on_bbox'] == g['model.bbox_head.norm_on_bbox']
+        assert h['centerness_on_reg'] == g['model.bbox_head.centerness_on_reg']
+        assert h['use_hbbox_loss'] == g['model.bbox_head.use_hbbox_loss']
+        assert h['scale_angle'] == g['model.bbox_head.scale_angle']
+        assert h['bbox_coder']['angle_version'] == \
+            g['model.bbox_head.bbox_coder.angle_version']
+        assert h['loss_bbox']['loss_weight'] == g['model.bbox_head.loss_bbox.loss_weight']
+        assert h['loss_angle'] is None and g['model.bbox_head.loss_angle'] is None
+        assert h['loss_centerness']['loss_weight'] == \
+            g['model.bbox_head.loss_centerness.loss_weight']
+
+    def test_optim_and_data(self, cfg, g):
+        o = cfg['optimizer']
+        # 铁律二 #5：stage-2 wd 就是 0.005
+        assert o['weight_decay'] == g['optim_wrapper.optimizer.weight_decay'] == 0.005
+        assert o['lr'] == g['optim_wrapper.optimizer.lr']
+        assert o['grad_clip']['max_norm'] == g['optim_wrapper.clip_grad.max_norm']
+        d = cfg['dataset']
+        assert d['train']['batch_size'] == g['train_dataloader.batch_size'] == 4
+        assert d['val']['batch_size'] == g['val_dataloader.batch_size'] == 4
+        assert 'pseudo_labels.bbox.json' in d['train']['ann_json']
+        assert 'pseudo_labels.bbox.json' in g['train_dataloader.dataset.ann_file']
+        assert d['train']['weak_supervision'] is False  # 全监督，无 ConvertWeakSupervision
+        assert cfg['max_epoch'] == g['train_cfg.max_epochs']
