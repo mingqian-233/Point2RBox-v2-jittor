@@ -474,6 +474,16 @@ ML_NMS_ROTATED_CUDA_SRC=r'''
 
   checkCudaErrors(cudaDeviceSynchronize());
 
+  // 原实现直接在 host 解引用 device 指针（mask_p/order_p/keep_p），
+  // 仅在 managed allocator 下侥幸可用，默认 allocator 会 segfault。
+  // 改为显式 memcpy（mmcv 标准做法）。
+  std::vector<unsigned long long> mask_host((size_t)dets_num * col_blocks);
+  checkCudaErrors(cudaMemcpy(mask_host.data(), mask_p, matrices_size, cudaMemcpyDeviceToHost));
+  std::vector<int> order_host(dets_num);
+  checkCudaErrors(cudaMemcpy(order_host.data(), order_p, dets_num * sizeof(int), cudaMemcpyDeviceToHost));
+  std::vector<bool> dummy; // keep std::vector include
+  std::vector<char> keep_host(dets_num, 0);
+
   std::vector<unsigned long long> remv(col_blocks);
   memset(&remv[0], 0, sizeof(unsigned long long) * col_blocks);
 
@@ -482,13 +492,14 @@ ML_NMS_ROTATED_CUDA_SRC=r'''
     int inblock = i % threadsPerBlock;
 
     if (!(remv[nblock] & (1ULL << inblock))) {
-      keep_p[order_p[i]] = true;
-      unsigned long long* p = mask_p + i * col_blocks;
+      keep_host[order_host[i]] = 1;
+      unsigned long long* p = mask_host.data() + i * col_blocks;
       for (int j = nblock; j < col_blocks; j++) {
         remv[j] |= p[j];
       }
     }
   }
+  checkCudaErrors(cudaMemcpy(keep_p, keep_host.data(), dets_num * sizeof(char), cudaMemcpyHostToDevice));
 exe.allocator->free(mask_p, matrices_size, mask_allocation);
 '''
 
