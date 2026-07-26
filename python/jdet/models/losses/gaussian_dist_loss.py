@@ -5,6 +5,12 @@ import jittor as jt
 from jittor import nn
 
 from jdet.utils.registry import LOSSES
+from jdet.ops.linalg2x2 import inv_2x2
+
+
+def det_2x2(m):
+    """2x2 batch 行列式（jt.linalg.det 是 numpy_code 实现，GPU 需 cupy，避免）。"""
+    return m[..., 0, 0] * m[..., 1, 1] - m[..., 0, 1] * m[..., 1, 0]
 
 def diag3d(x):
     return jt.stack([jt.diag(x_) for x_ in x])
@@ -129,7 +135,7 @@ def gwd_loss(pred, target, weight=None, fun='log1p', tau=1.0, alpha=1.0, normali
     whr_distance += diag3d(Sigma_t).sum(-1)
 
     _t_tr = diag3d(nn.bmm(Sigma_p, Sigma_t)).sum(dim=-1)
-    _t_det_sqrt = (jt.linalg.det(Sigma_p) * jt.linalg.det(Sigma_t)).clamp(1e-7).sqrt()
+    _t_det_sqrt = (det_2x2(Sigma_p) * det_2x2(Sigma_t)).clamp(1e-7).sqrt()
     whr_distance = whr_distance + (-2) * (
         (_t_tr + 2 * _t_det_sqrt).clamp(1e-7).sqrt())
 
@@ -166,15 +172,15 @@ def kld_loss(pred, target, weight=None, fun='log1p', tau=1.0, alpha=1.0, sqrt=Tr
     Sigma_p = Sigma_p.reshape(-1, 2, 2)
     Sigma_t = Sigma_t.reshape(-1, 2, 2)
 
-    Sigma_p_inv = jt.linalg.inv(Sigma_p)
-    Sigma_p_inv = Sigma_p_inv / jt.linalg.det(Sigma_p).unsqueeze(-1).unsqueeze(-1)
+    Sigma_p_inv = inv_2x2(Sigma_p)
+    Sigma_p_inv = Sigma_p_inv / det_2x2(Sigma_p).unsqueeze(-1).unsqueeze(-1)
 
     dxy = (xy_p - xy_t).unsqueeze(-1)
     xy_distance =  0.5 * nn.bmm(nn.bmm(dxy.permute(0, 2, 1), Sigma_p_inv), dxy).view(-1)
 
     whr_distance = 0.5 * diag3d(nn.bmm(Sigma_p_inv, Sigma_t)).sum(dim=-1)
-    Sigma_p_det_log = jt.log(jt.linalg.det(Sigma_p))
-    Sigma_t_det_log = jt.log(jt.linalg.det(Sigma_t))
+    Sigma_p_det_log = jt.log(det_2x2(Sigma_p))
+    Sigma_t_det_log = jt.log(det_2x2(Sigma_t))
     whr_distance = whr_distance + 0.5 * (Sigma_p_det_log - Sigma_t_det_log)
     whr_distance = whr_distance - 1
     distance = (xy_distance / (alpha * alpha) + whr_distance)

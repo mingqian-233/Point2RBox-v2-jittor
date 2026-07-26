@@ -719,3 +719,96 @@ class PSCCoder:
         phase[phase_mod < self.thr_mod] *= 0
         angle_pred = phase / 2
         return angle_pred
+
+
+@BOXES.register_module()
+class DistanceAnglePointCoder:
+    """mmrotate DistanceAnglePointCoder 的 Jittor 移植。
+
+    (x,y,w,h,θ) ↔ (left,top,right,bottom,θ)。norm_angle 按 mmrotate 语义：
+    le90 → (a + π/2) % π − π/2。
+    """
+
+    def __init__(self, clip_border=True, angle_version='oc', use_hbox=False):
+        self.clip_border = clip_border
+        self.angle_version = angle_version
+        self.use_hbox = use_hbox
+
+    @staticmethod
+    def _norm_angle(angle, angle_version):
+        if angle_version == 'oc':
+            return angle
+        elif angle_version == 'le135':
+            return (angle + math.pi / 4) % math.pi - math.pi / 4
+        elif angle_version == 'le90':
+            return (angle + math.pi / 2) % math.pi - math.pi / 2
+        raise NotImplementedError(angle_version)
+
+    def encode(self, points, gt_bboxes, max_dis=None, eps=0.1):
+        assert points.shape[0] == gt_bboxes.shape[0]
+        assert points.shape[-1] == 2
+        assert gt_bboxes.shape[-1] == 5
+        return self.obb2distance(points, gt_bboxes, max_dis, eps)
+
+    def decode(self, points, pred_bboxes, max_shape=None):
+        assert points.shape[0] == pred_bboxes.shape[0]
+        assert points.shape[-1] == 2
+        assert pred_bboxes.shape[-1] == 5
+        if self.clip_border is False:
+            max_shape = None
+        if self.use_hbox:
+            return self.distance2obb_h(points, pred_bboxes, max_shape,
+                                       self.angle_version)
+        return self.distance2obb(points, pred_bboxes, max_shape,
+                                 self.angle_version)
+
+    def obb2distance(self, points, distance, max_dis=None, eps=None):
+        ctr = distance[..., :2]
+        wh = distance[..., 2:4]
+        angle = distance[..., 4:5]
+
+        cos_angle, sin_angle = jt.cos(angle), jt.sin(angle)
+        rot_matrix = jt.concat([cos_angle, sin_angle, -sin_angle, cos_angle],
+                               dim=-1).reshape(ctr.shape[:-1] + (2, 2))
+
+        offset = points - ctr
+        offset = jt.matmul(rot_matrix, offset[..., None]).squeeze(-1)
+
+        w, h = wh[..., 0], wh[..., 1]
+        offset_x, offset_y = offset[..., 0], offset[..., 1]
+        left = w / 2 + offset_x
+        right = w / 2 - offset_x
+        top = h / 2 + offset_y
+        bottom = h / 2 - offset_y
+        if max_dis is not None:
+            left = left.clamp(0, max_dis - eps)
+            top = top.clamp(0, max_dis - eps)
+            right = right.clamp(0, max_dis - eps)
+            bottom = bottom.clamp(0, max_dis - eps)
+        return jt.stack((left, top, right, bottom, angle.squeeze(-1)), -1)
+
+    def distance2obb(self, points, distance, max_shape=None, angle_version='oc'):
+        angle = distance[..., 4:5]
+        distance = distance[..., :4]
+
+        cos_angle, sin_angle = jt.cos(angle), jt.sin(angle)
+        rot_matrix = jt.concat([cos_angle, -sin_angle, sin_angle, cos_angle],
+                               dim=-1)
+        rot_matrix = rot_matrix.reshape(rot_matrix.shape[:-1] + (2, 2))
+
+        wh = distance[..., :2] + distance[..., 2:]
+        offset_t = (distance[..., 2:] - distance[..., :2]) / 2
+        offset = jt.matmul(rot_matrix, offset_t[..., None]).squeeze(-1)
+        ctr = points[..., :2] + offset
+
+        angle_regular = self._norm_angle(angle, angle_version)
+        return jt.concat([ctr, wh, angle_regular], dim=-1)
+
+    def distance2obb_h(self, points, distance, max_shape=None, angle_version='oc'):
+        angle = distance[..., 4:5]
+        distance = distance[..., :4]
+        wh = distance[..., :2] + distance[..., 2:]
+        offset = (distance[..., 2:] - distance[..., :2]) / 2
+        ctr = points[..., :2] + offset
+        angle_regular = self._norm_angle(angle, angle_version)
+        return jt.concat([ctr, wh, angle_regular], dim=-1)

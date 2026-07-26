@@ -74,7 +74,15 @@ def inv_2x2(m):
 
 
 def solve_2x2(A, B):
-    """解 A X = B。A: (..., 2, 2)，B: (..., 2, k) 或 (..., 2)。matmul 支持任意 batch 维。"""
-    if B.ndim == A.ndim - 1:
-        return jt.matmul(inv_2x2(A), B.unsqueeze(-1)).squeeze(-1)
-    return jt.matmul(inv_2x2(A), B)
+    """解 A X = B。A: (..., 2, 2)，B: (..., 2, k) 或 (..., 2)。
+
+    GPU 的 cublas_batched_matmul 不做 batch 广播（CPU 会），batch 维不一致时
+    显式 expand（A 的 batch 需为 1 或与 B 相同）。"""
+    squeeze = B.ndim == A.ndim - 1
+    if squeeze:
+        B = B.unsqueeze(-1)
+    inv = inv_2x2(A)
+    if tuple(inv.shape[:-2]) != tuple(B.shape[:-2]):
+        inv = inv.expand(tuple(B.shape[:-2]) + (2, 2))
+    out = jt.matmul(inv, B)
+    return out.squeeze(-1) if squeeze else out

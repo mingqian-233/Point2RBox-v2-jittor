@@ -23,3 +23,4 @@ from . import rotated_atss_head
 from . import rotated_reppoints_head
 from . import point2rbox_head
 __all__ = []
+from .point2rbox_v2_head import Point2RBoxV2Head
