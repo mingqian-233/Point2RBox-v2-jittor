@@ -1,3 +1,13 @@
+# Point2RBox-v2 (Jittor)
+
+> **This repository is a [Jittor](https://github.com/Jittor/jittor) port of
+> [Point2RBox-v2](https://github.com/VisionXLab/point2rbox-v2) (PyTorch, mmrotate-based),
+> built on top of [VisionXLab/whollywood-jittor](https://github.com/VisionXLab/whollywood-jittor)
+> (JDet + Jittor).** The original LICENSE and citations are preserved.
+> Porting is in progress; the original Wholly-WOOD README follows below.
+
+---
+
 # Wholly-WOOD
 ## Introduction
 We develop **Wholly-WOOD** (**Wholly** Leveraging Diversified-quality Labels for **W**eakly-supervised **O**riented **O**bject **D**etection), a weakly-supervised OOD framework, capable of wholly leveraging various labeling forms (Points, HBoxes, RBoxes, and their combination) in a unified fashion. By only using HBox for training, our Wholly-WOOD achieves performance very close to that of the RBox-trained counterpart on remote sensing and other areas, which significantly reduces the tedious efforts on labor-intensive annotation for oriented objects.
