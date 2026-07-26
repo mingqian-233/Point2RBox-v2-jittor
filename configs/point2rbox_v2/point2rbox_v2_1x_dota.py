@@ -101,7 +101,10 @@ dataset = dict(
                  to_bgr=False),
         ],
         batch_size=2,                 # 官方总 batch=2（单卡，PLAN §9.1）
-        num_workers=2,
+        # [plan-deviation] 官方 num_workers=2；jittor dataset 多进程环形缓冲存在
+        # send/idqueue 竞态死锁（实测 40min 触发，worker 卡 buffer.send、主进程卡
+        # idqueue.pop）。num_workers 是加载性能参数、不影响任何数值语义，改 0 规避。
+        num_workers=0,
         shuffle=True),
     val=dict(
         type='P2RV2DOTADataset',
