@@ -10,3 +10,10 @@ from .whollywood_dota import WhollyWoodDOTADataset
 from .p2rv2_dota import P2RV2DOTADataset, MMRotateRandomFlip
 from .mm_datasets import (DOTAv15Dataset, DOTAv2Dataset, STARDataset,
                           RSARDataset, OCDPCBDataset)
+# 铁律三第 2 层异构数据集（复用 Agent B 已验证实现）。
+from .dota_txt_variant import DOTATxtVariantDataset
+from .dior import DIORDataset
+from .hrsc import HRSCDataset
+from .diatom import DIATOMDataset
+from .sku110k import SKU110KDataset
+from .coco_rbox import SARDet100kDataset, SRSDDDataset, RSDDDataset, HRSIDDataset

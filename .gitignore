@@ -48,4 +48,7 @@ tools/merge_results2.py
 logs/
 *.log
 !scripts/*.sh
+/data/
+sam_cache/
+tests/data/*.npz
 !third_parties/ted/ted.pkl
