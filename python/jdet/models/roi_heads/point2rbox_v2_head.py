@@ -37,10 +37,15 @@ def _group_mean(values, idx, num_groups):
     if squeeze:
         values = values.unsqueeze(-1)
     idx_np = idx if isinstance(idx, np.ndarray) else idx.numpy()
-    onehot = jt.array((idx_np[None, :] == np.arange(num_groups)[:, None])
-                      .astype(np.float32))  # (G, N)
-    count = onehot.sum(1, keepdims=True).clamp(1)
-    out = jt.matmul(onehot, values) / count
+    # scatter-add 段求和 O(N·C)。原 one-hot 矩阵乘是 O(G·N·C)——num_pos 大的
+    # 批次（数万正样本 × 数千组）单次分配数百 MB、耗时秒级，是慢批次主因
+    N, C = values.shape
+    idx_jt = jt.array(idx_np.astype(np.int32))
+    out = jt.zeros((num_groups, C), dtype=values.dtype).scatter(
+        0, idx_jt.unsqueeze(-1).expand((N, C)), values, reduce='add')
+    count_np = np.bincount(idx_np, minlength=num_groups).astype(np.float32)
+    count = jt.array(np.maximum(count_np, 1.0)).unsqueeze(-1)
+    out = out / count
     return out[:, 0] if squeeze else out
 
 
