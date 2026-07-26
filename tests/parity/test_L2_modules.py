@@ -215,3 +215,28 @@ class TestConsistencyLoss:
 
     def test_sca(self):
         self._run('sca', 1.3)
+
+
+class TestTED:
+    """third_parties/ted 移植：加载转换权重后 4 个输出与 torch 版逐位对齐。"""
+
+    def test_forward(self):
+        import pickle
+        import jittor as jt
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+        from third_parties.ted.ted import TED
+
+        g = np.load(os.path.join(GOLDEN, 'ted_forward.npz'))
+        model = TED()
+        pkl = os.path.join(os.path.dirname(__file__), '..', '..',
+                           'third_parties', 'ted', 'ted.pkl')
+        with open(pkl, 'rb') as f:
+            sd = pickle.load(f)
+        model.load_parameters({k: jt.array(v) for k, v in sd.items()})
+        model.eval()
+        with jt.no_grad():
+            outs = model(jt.array(g['x']))
+        for i, o in enumerate(outs):
+            want = g[f'out{i}']
+            _assert_close(o.numpy(), want, 1e-4, f'ted_out{i}')
