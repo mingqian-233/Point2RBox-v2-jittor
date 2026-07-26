@@ -47,6 +47,7 @@ class P2RV2DOTADataset(CustomDataset):
                  point_dummy=1.0,
                  hbox_dummy=0.0,
                  weak_supervision=True,
+                 ann_json=None,
                  transforms=None,
                  batch_size=1,
                  num_workers=0,
@@ -70,10 +71,12 @@ class P2RV2DOTADataset(CustomDataset):
         self.point_dummy = point_dummy
         self.hbox_dummy = hbox_dummy
         self.weak_supervision = weak_supervision
+        self.ann_json = ann_json
         self.diff_thr = diff_thr
         self.transforms = Compose(transforms) if transforms is not None else None
 
-        self.img_infos = self._load_annfiles()
+        self.img_infos = (self._load_json() if ann_json is not None
+                          else self._load_annfiles())
         if filter_empty_gt:
             self.img_infos = [i for i in self.img_infos
                               if len(i['ann']['bboxes']) > 0]
@@ -104,6 +107,26 @@ class P2RV2DOTADataset(CustomDataset):
                 filename=fname[:-4] + '.png',
                 ann=dict(bboxes=rboxes,
                          labels=np.array(labels, dtype=np.int32),
+                         bboxes_ignore=np.zeros((0, 5), dtype=np.float32),
+                         labels_ignore=np.zeros((0,), dtype=np.int32))))
+        return img_infos
+
+    def _load_json(self):
+        """读 stage-1.5 产出的 COCO 风格 *.bbox.json（mmrotate DOTADataset json 分支语义）。"""
+        import json
+        with open(self.ann_json) as f:
+            root = json.load(f)
+        instances = {}
+        for item in root:
+            instances.setdefault(item['image_id'], []).append(item)
+        img_infos = []
+        for img_id in sorted(instances.keys()):
+            items = instances[img_id]
+            rboxes = np.array([it['bbox'] for it in items], dtype=np.float32).reshape(-1, 5)
+            labels = np.array([it['category_id'] for it in items], dtype=np.int32)
+            img_infos.append(dict(
+                filename=img_id + '.png',
+                ann=dict(bboxes=rboxes, labels=labels,
                          bboxes_ignore=np.zeros((0, 5), dtype=np.float32),
                          labels_ignore=np.zeros((0,), dtype=np.int32))))
         return img_infos

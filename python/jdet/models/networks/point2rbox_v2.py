@@ -340,7 +340,7 @@ class Point2RBoxV2(nn.Module):
         return self.bbox_head.get_bboxes(feat, targets)
 
     def execute(self, images, targets):
-        if 'rboxes' in targets[0]:
+        # 不能只看 'rboxes'（val/伪标签生成的 targets 也带 GT）——按训练态分发
+        if self.is_training() and 'rboxes' in targets[0]:
             return self.forward_train(images, targets)
-        else:
-            return self.forward_test(images, targets)
+        return self.forward_test(images, targets)
