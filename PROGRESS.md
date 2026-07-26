@@ -91,3 +91,32 @@
 - M3 完成打 tag core-stable（计划 §3 与 M4 验收表述不一致，按 §3 的 M3 时点执行，
   B 正在等 tag 开工他的 M5）
 - C4（DOTA COCO json + DOTAMetric）排在 M3 后（只有我的 stage-2 依赖，B 不等它）
+
+---
+
+## 2026-07-26（Day 1，追加：M3 完成，core-stable 发布）
+
+### 做完什么
+- **M3 全部完成，tag `core-stable` 已发布**（commit 9a6c57b），B 已在 merge
+- `ops/linalg2x2.py`：2×2 eigh/solve/diag_embed 闭式解，16 用例（含 w==h/近各向同性/
+  面积 1e-6/大条件数）6/6 过。关键实现点：EPS=1e-24（1e-12 会污染小面积框）、
+  b 对称化读取（梯度在 [0,1]/[1,0] 对称分摊）、|delta|/disc≤1 保证梯度有界
+- 四个 loss 逐个移植+parity+commit（源=v3 版，扩展参数默认=v2 行为）：
+  - GaussianOverlapLoss：前向 rel<1e-4，mu/sigma 梯度 rel<1e-3（官方参数与 lamb 两路径）
+  - VoronoiWatershedLoss：**watershed markers 与 PyTorch 逐像素一致**，前向 rel 3e-7
+  - EdgeLoss：新移植 RotatedSingleRoIExtractor；前向 rel<1e-3
+  - ConsistencyLoss：rot/flp/sca 三路径全过
+- 测试面板：**34 passed / 1 skipped**（底座自带 test_dataset 的 2 个收集错误是其要数据文件，与本仓库无关）
+
+### 新踩坑（已回馈给 B）
+- jt reduce（.max()）出 shape [1]，stack 两个会得 (2,1) → 用 concat
+- torch.meshgrid(indexing='xy') jittor 无 → 手工构造
+- 简并 eigh 的逐特征值梯度是子梯度（与 torch 的差异只在基底分配，trace 一致）
+
+### 训练巡检（实验 X @GPU 0）
+- 13:28 epoch1 5350/6400：loss 3.94→2.47 稳降、lr 满 5e-5、grad_norm≈32（未触 35 裁剪线）、
+  显存 5.3GB、0.38s/iter、ETA 7.5h。loss_bbox_edg=0 待 epoch6 符合预期
+
+### 接下来
+- M4：v2 head（43KB，按方法块拆 commit）+ detector + config（targets/bids 约定定下后同步 B）
+- C4（DOTA COCO json + DOTAMetric）与 M4 交错做
