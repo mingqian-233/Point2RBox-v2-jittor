@@ -583,6 +583,8 @@ class Point2RBoxV2ConsistencyLoss(nn.Module):
             cos_r = jt.cos(rot)
             sin_r = jt.sin(rot)
             R = jt.stack((cos_r, -sin_r, sin_r, cos_r), dim=-1).reshape(-1, 2, 2)
+            # GPU 的 cublas_batched_matmul 不广播 batch 维：R 是 (1,2,2) 需 expand
+            R = R.expand((ori_gaus.shape[0], 2, 2))
             ori_gaus = jt.matmul(jt.matmul(R, ori_gaus), R.permute(0, 2, 1))
             d_ang = trs_angle - ori_angle - aug_val
         elif aug_type == 'flp':
@@ -603,3 +605,51 @@ class Point2RBoxV2ConsistencyLoss(nn.Module):
         loss_ssa = (loss_ssa * keep).sum() / jt.maximum(keep.sum(), jt.float32(1.0))
 
         return self.loss_weight * (loss_ssg + loss_ssa)
+
+
+@LOSSES.register_module()
+class MMDetFocalLoss(nn.Module):
+    """mmdet FocalLoss 的 Jittor 等价实现（0-based 标签，bg=num_classes）。
+
+    底座 FocalLoss 是 1-based 标签约定（v1 数据集），与 mmdet 的
+    py_sigmoid_focal_loss 语义不同（one-hot 列映射差一位、bg 处理不同），
+    v2 head 使用本类。公式对齐 mmdet.models.losses.focal_loss.py_sigmoid_focal_loss。
+    """
+
+    def __init__(self,
+                 use_sigmoid=True,
+                 gamma=2.0,
+                 alpha=0.25,
+                 reduction='mean',
+                 loss_weight=1.0):
+        super(MMDetFocalLoss, self).__init__()
+        assert use_sigmoid is True
+        self.use_sigmoid = use_sigmoid
+        self.gamma = gamma
+        self.alpha = alpha
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def execute(self, pred, target, weight=None, avg_factor=None,
+                reduction_override=None):
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = reduction_override if reduction_override else self.reduction
+        num_classes = pred.shape[1]
+        # F.one_hot(target, num_classes+1)[:, :num_classes]：bg 行全 0
+        idx = jt.arange(num_classes)[None, :]
+        onehot = (target[:, None] == idx).float()
+
+        pred_sigmoid = pred.sigmoid()
+        pt = (1 - pred_sigmoid) * onehot + pred_sigmoid * (1 - onehot)
+        focal_weight = (self.alpha * onehot + (1 - self.alpha) * (1 - onehot)) \
+            * pt.pow(self.gamma)
+        # BCE with logits（数值稳定形式）
+        bce = jt.maximum(pred, jt.zeros_like(pred)) - pred * onehot \
+            + jt.log(1 + jt.exp(-jt.abs(pred)))
+        loss = bce * focal_weight
+        if weight is not None:
+            if weight.ndim == 1:
+                weight = weight.reshape(-1, 1)
+            loss = loss * weight
+        loss = weight_reduce_loss(loss, None, reduction, avg_factor)
+        return self.loss_weight * loss

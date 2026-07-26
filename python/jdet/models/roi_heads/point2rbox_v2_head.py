@@ -81,7 +81,7 @@ class Point2RBoxV2Head(nn.Module):
                      num_step=3,
                      thr_mod=0),
                  loss_cls=dict(
-                     type='FocalLoss',
+                     type='MMDetFocalLoss',
                      use_sigmoid=True,
                      gamma=2.0,
                      alpha=0.25,
