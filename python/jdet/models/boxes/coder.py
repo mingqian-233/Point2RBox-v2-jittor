@@ -666,7 +666,7 @@ class PSCCoder:
                 jt.cos(phase_targets + 2 * math.pi * x / self.num_step)
                 for x in range(self.num_step))
 
-        return jt.cat(phase_shift_targets, axis=-1)
+        return jt.concat(phase_shift_targets, dim=-1)
 
     def decode(self, angle_preds, keepdim: bool = False):
         """Phase-Shifting Decoder.

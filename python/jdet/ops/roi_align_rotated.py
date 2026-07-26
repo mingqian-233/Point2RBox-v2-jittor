@@ -310,13 +310,36 @@ class _RotatedROIAlign(jt.Function):
 roi_align = _RotatedROIAlign.apply
 
 class ROIAlignRotated(nn.Module):
-    def __init__(self, output_size, spatial_scale, sampling_ratio=0):
+    """RoIAlignRotated。
+
+    aligned / clockwise 与 mmcv.ops.RoIAlignRotated 语义一致，在 Python 层做
+    roi 变换实现。实测（tests/parity）：**JDet 原生 kernel 的角度方向就等于
+    mmcv 的 clockwise=True**（两边 kernel 的旋转矩阵互为转置，mmcv 的 clockwise
+    取负后恰与 JDet 原生一致），故 clockwise=True 时不变换、False 时取负；
+    默认 clockwise=True / aligned=False 即 JDet 原行为，既有调用方不受影响。
+    已知残留差异：mmcv 在 aligned=True 时不做 1x1 最小 roi 钳制，本实现的
+    CUDA kernel 始终钳制——仅影响亚像素 roi（见 docs/porting_notes.md）。
+    """
+
+    def __init__(self, output_size, spatial_scale, sampling_ratio=0,
+                 aligned=False, clockwise=True):
         super(ROIAlignRotated, self).__init__()
         self.output_size = _pair(output_size)
         self.spatial_scale = spatial_scale
         self.sampling_ratio = sampling_ratio
+        self.aligned = aligned
+        self.clockwise = clockwise
 
     def execute(self, input, rois):
+        if self.aligned or not self.clockwise:
+            assert rois.shape[1] == 6
+            ctr = rois[:, 1:3]
+            if self.aligned:
+                ctr = ctr - 0.5 / self.spatial_scale
+            theta = rois[:, 5:6]
+            if not self.clockwise:
+                theta = -theta
+            rois = jt.concat([rois[:, 0:1], ctr, rois[:, 3:5], theta], dim=1)
         return roi_align(
             input, rois, self.output_size, self.spatial_scale, self.sampling_ratio
         )

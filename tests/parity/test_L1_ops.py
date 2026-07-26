@@ -69,6 +69,75 @@ class TestLRSchedule:
             assert abs(got - expect) < 1e-15, f'iter={it} epoch={ep}: {got} != {expect}'
 
 
+class TestPSCCoder:
+    """底座 PSCCoder vs mmrotate（官方 config 参数：le90, dual_freq=False, num_step=3, thr_mod=0）。"""
+
+    def test_encode_decode(self):
+        import jittor as jt
+        from jdet.models.boxes.coder import PSCCoder
+
+        g = np.load(os.path.join(GOLDEN, 'ops_misc.npz'))
+        coder = PSCCoder(angle_version='le90', dual_freq=False, num_step=3, thr_mod=0)
+        assert coder.encode_size == 3
+        enc = coder.encode(jt.array(g['psc_angles']))
+        np.testing.assert_allclose(enc.numpy(), g['psc_encoded'], rtol=1e-5, atol=1e-6)
+        dec = coder.decode(jt.array(g['psc_encoded']), keepdim=True)
+        # 角度按模 π 的角距离比较：±π/2 端点处 atan2(∓0,-1) 的符号翻转会给出
+        # +π/2 vs -π/2——le90 下同一朝向（周期 π），不是语义差异
+        d = np.abs(dec.numpy() - g['psc_decoded'])
+        d = np.minimum(d, np.abs(d - np.pi))
+        assert d.max() < 1e-5, f'decode 角距离 max = {d.max()}'
+
+
+class TestBoxIouRotated:
+    def test_iou_vs_mmcv(self):
+        import jittor as jt
+        from jdet.ops.box_iou_rotated import box_iou_rotated
+
+        g = np.load(os.path.join(GOLDEN, 'ops_misc.npz'))
+        iou = box_iou_rotated(jt.array(g['iou_boxes1']), jt.array(g['iou_boxes2']))
+        np.testing.assert_allclose(iou.numpy(), g['iou'], rtol=1e-4, atol=1e-5)
+
+
+class TestNMSRotated:
+    def test_keep_set_vs_mmcv(self):
+        """keep 集合与 mmcv 一致（iou_threshold=0.1，官方 test_cfg 值）。
+
+        已知语义差异（M4 head 层需适配）：jdet 返回原始下标顺序，
+        mmcv 返回按分数降序——影响 max_per_img 截断，此处只比集合。"""
+        import jittor as jt
+        from jdet.ops.nms_rotated import nms_rotated
+
+        g = np.load(os.path.join(GOLDEN, 'ops_misc.npz'))
+        keep = nms_rotated(jt.array(g['nms_boxes']), jt.array(g['nms_scores']), 0.1)
+        assert sorted(keep.numpy().tolist()) == sorted(g['nms_keep'].tolist())
+
+
+class TestRoIAlignRotated:
+    """B 问的角度约定：jdet ROIAlignRotated（无 clockwise 参数）vs mmcv clockwise=True。"""
+
+    def _run(self, osize):
+        import jittor as jt
+        from jdet.ops.roi_align_rotated import ROIAlignRotated
+
+        g = np.load(os.path.join(GOLDEN, 'ops_misc.npz'))
+        jt.flags.use_cuda = 1  # jdet 该算子只有 CUDA 实现
+        # mmcv(clockwise=True) 等价参数：aligned=True + clockwise=True（=JDet 原生方向）
+        op = ROIAlignRotated(osize, spatial_scale=1.0, sampling_ratio=2,
+                             aligned=True, clockwise=True)
+        out = op(jt.array(g['ra_feat']), jt.array(g['ra_rois']))
+        jt.flags.use_cuda = 0
+        return out.numpy(), g[f'ra_out_{osize}']
+
+    def test_out7_matches_clockwise_true(self):
+        got, want = self._run(7)
+        np.testing.assert_allclose(got, want, rtol=1e-4, atol=1e-4)
+
+    def test_out49_matches_clockwise_true(self):
+        got, want = self._run(49)
+        np.testing.assert_allclose(got, want, rtol=1e-4, atol=1e-4)
+
+
 class TestClipGrad:
     """C1：AdamW(grad_clip=dict(max_norm=35, norm_type=2)) 裁剪后全局 L2 范数 == 35。"""
 
