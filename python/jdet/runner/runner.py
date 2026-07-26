@@ -134,6 +134,8 @@ class Runner:
             all_loss,losses = parse_losses(losses)
             self.optimizer.step(all_loss)
             if check_interval(self.iter,self.log_interval) and self.iter>0:
+                # 观测惰性图规模（排查节点累积型退化）
+                live = jt.liveness_info()
                 batch_size = len(images)*jt.world_size
                 ptime = time.time()-start_time
                 fps = batch_size*(batch_idx+1)/ptime
@@ -148,7 +150,9 @@ class Runner:
                     batch_size = batch_size,
                     total_loss = all_loss,
                     fps=fps,
-                    eta=eta_str
+                    eta=eta_str,
+                    lived_vars=live['lived_vars'],
+                    lived_ops=live['lived_ops'],
                 )
                 data.update(losses)
                 data = sync(data)
