@@ -273,3 +273,30 @@
 ### 当前
 - 训练（20:00 起，commit ba5b766）全速稳定，~2.5-2.8fps，ETA 明晨 ~4-5 点
 - PyTorch baseline epoch 9/12（LR 已进入首个衰减档），ETA ~23:40
+
+## Day 1 晚班（20:30-22:15）——"趁训练写代码"
+
+### 完成
+- **第 2 层数据集 loaders**（a264be3）：mm_datasets.py = DOTAv15/DOTAv2/STAR/RSAR/OCDPCB
+  （实读 ref 归类：dior/fair 实为 XML 系，ocdpcb 实为 DOTA-txt；XML/COCO 系登记
+  port_scope.md）；基类支持子类 CLASSES/IMG_SUFFIX + RSAR 扩展名回退；冒烟 8 项全过
+- **stage-2 RotatedFCOSHead 全量 parity**（0a55c59）：golden=官方 using-pseudo 配置缩通道，
+  loss 三项 rel<1e-3、forward 逐层<1e-3、cls+ctr 梯度 CPU 1e-4、总梯度 5e-3。
+  过程中挖出并修掉三个真问题：
+  1. diff_iou_rotated 鞋带公式在原始图像坐标下被 jittor FMA 融合放大大数消去
+     （退化框假面积 → loss_bbox 差 16%）→ 改中心化坐标（面积平移不变）
+  2. jittor nn.GroupNorm 一遍式方差 E[x²]−E[x]² → 底座 'GN' 换 GroupNorm2Pass
+  3. CUDA torch dump golden 默认 TF32 → golden 自带 4e-4 污染 → dump 统一关
+- **README 重写**（2db58e0）：v2 主叙事 + 结果表（TBD 等 ckpt）+ parity 表 + 上游折叠
+- **issue #3 结案**（44d4f65）：B 的 bisect 指控 ba5b766 梯度回归 → 四步证据链证明是
+  cudnn Find 计时选算法 + A100 TF32 候选的跨进程漂移假信号；scatter 梯度与 one-hot
+  逐位一致；训练无恙不重启。复现脚本 tools/debug/。教训入 porting_notes：
+  **GPU 数值 parity 不可用于 bisect，逐元素断言只在 CPU 做**
+- HeadParity/FCOSHeadParity 重构为 GPU 松验(5e-2) + CPU 紧验(1e-4)，
+  「独占 GPU 后复核容差」这一遗留项随之销案
+
+### 当前
+- 训练 iter 8350/epoch 1（21:42 时点），我的 parity 测试与其共卡一小时导致 fps
+  2.83→2.18，测试已停、待回升；X baseline epoch 9/12 无恙
+- 注意：训练进程载入的是 ba5b766 代码（GN 一遍式、旧 diff_iou）——语义无错不重启，
+  stage-2 起自然用新代码
