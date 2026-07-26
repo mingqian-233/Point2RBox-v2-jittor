@@ -6,6 +6,9 @@
 
 | # | 问题 | 症状 | 对策 |
 |---|---|---|---|
+| 0a | **`.stop_grad()` 是就地打标记（≠torch detach）** | 把它当 detach 用 → 原变量本体被标无梯度，前向全对、相关 loss 梯度静默为 0 | detach 语义一律用 `.detach()`（返回新变量）；`.stop_grad()` 只用于"这个变量从此不需要梯度"（如冻结参数） |
+| 0b | **逐实例 python 循环 + 惰性求值 = 巨图卡死** | 密集图（J≥数百）单 batch 卡 15+ 分钟、CPU 空转、无报错 | 分块批量化（增量 argmax 等价改写）；detach 路径转 numpy；必要时循环内 `.sync()` 截断图 |
+| 0c | **多进程 dataloader 环形缓冲死锁** | worker 卡 buffer.send、主进程卡 idqueue.pop（py-spy 可证） | num_workers=0（加载占比小时性价比最高） |
 | 1 | **jittor 1.3.8.5 + numpy≥2** | 凡 `jt.array`（numpy 数据）喂进计算图的算子输出未初始化内存；roundtrip 与无输入算子（rand/ones）正常 | 钉死 numpy==1.26.4；smoke 测试有防回归断言 |
 | 2 | **`jt.linalg.{det,inv,eigh,svd}` 是 numpy_code 实现** | GPU 上要 cupy（未装则 ModuleNotFoundError，且因惰性求值报错位置在千里之外的第一次 sync 处） | 2×2 全部用闭式解（`ops/linalg2x2.py`、`det_2x2`） |
 | 3 | **in-place 赋值的自动微分不可靠** | 前向对、梯度 0 | loss 路径一律 out-of-place（jt.where/concat 重建）；L2 必须比梯度 |
