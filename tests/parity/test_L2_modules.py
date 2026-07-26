@@ -89,3 +89,46 @@ class TestGDLossGWD:
         assert rel < 1e-4, f'weighted forward rel err = {rel}'
         g = jt.grad(loss, pred)
         _assert_close(g.numpy(), golden['gwd_grad_weighted'], 1e-3, 'gwd_grad_weighted')
+
+
+class TestGaussianOverlapLoss:
+    """M3 §1：GaussianOverlapLoss vs mmrotate（官方参数 w=10,lamb=0 + 默认 lamb 路径）。"""
+
+    @pytest.fixture(scope='class')
+    def g(self):
+        return np.load(os.path.join(GOLDEN, 'p2rv2_loss.npz'))
+
+    def _run(self, g, loss_weight, lamb, tag):
+        import jittor as jt
+        from jdet.models.losses.point2rbox_v2_loss import GaussianOverlapLoss
+
+        mu = jt.array(g['gol_mu'])
+        sigma = jt.array(g['gol_sigma'])
+        loss = GaussianOverlapLoss(loss_weight=loss_weight, lamb=lamb)((mu, sigma))
+        rel = abs(float(loss.item()) - float(g[f'gol_{tag}_loss'])) \
+            / abs(float(g[f'gol_{tag}_loss']))
+        assert rel < 1e-4, f'{tag} forward rel err = {rel}'
+        gm, gs = jt.grad(loss, [mu, sigma])
+        assert np.abs(gm.numpy()).sum() > 0, 'mu 梯度全 0'
+        _assert_close(gm.numpy(), g[f'gol_{tag}_mu_grad'], 1e-3, f'{tag}_mu_grad')
+        _assert_close(gs.numpy(), g[f'gol_{tag}_sigma_grad'], 1e-3, f'{tag}_sigma_grad')
+
+    def test_official_cfg(self, g):
+        self._run(g, 10.0, 0, 'cfg')
+
+    def test_default_lamb(self, g):
+        self._run(g, 1.0, 1e-4, 'lamb')
+
+
+class TestGwdSigmaLoss:
+    def test_forward_grad(self):
+        import jittor as jt
+        from jdet.models.losses.point2rbox_v2_loss import gwd_sigma_loss
+
+        g = np.load(os.path.join(GOLDEN, 'p2rv2_loss.npz'))
+        a = jt.array(g['gws_a'])
+        loss = gwd_sigma_loss(a, jt.array(g['gws_b']), reduction='mean')
+        rel = abs(float(loss.item()) - float(g['gws_loss'])) / abs(float(g['gws_loss']))
+        assert rel < 1e-4, f'forward rel err = {rel}'
+        grad = jt.grad(loss, a)
+        _assert_close(grad.numpy(), g['gws_grad'], 1e-3, 'gws_grad')
