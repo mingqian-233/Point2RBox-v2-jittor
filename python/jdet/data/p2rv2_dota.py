@@ -163,6 +163,12 @@ class P2RV2DOTADataset(CustomDataset):
             img_file=img_path)
         return image, ann
 
+    def evaluate(self, results, work_dir, epoch, logger=None, save=True):
+        """DOTA VOC-style mAP（本地趋势用；最终精度以官方 test 提交为准）。"""
+        from jdet.data.dota import DOTADataset
+        return DOTADataset.evaluate(self, results, work_dir, epoch,
+                                    logger=logger, save=save)
+
 
 from jdet.utils.registry import TRANSFORMS
 import random as _random

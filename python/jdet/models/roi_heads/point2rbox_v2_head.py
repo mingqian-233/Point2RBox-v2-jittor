@@ -742,5 +742,15 @@ class Point2RBoxV2Head(nn.Module):
 
     # ------------------------------------------------------------ test bridge
     def get_bboxes(self, x, targets):
+        """测试路径：返回 JDet 约定的 (polys, scores, labels) 元组列表。"""
+        from jdet.models.boxes.box_ops import rotated_box_to_poly
         outs = self.forward(x)
-        return self.predict_by_feat(*outs, targets=targets)
+        results = self.predict_by_feat(*outs, targets=targets)
+        out = []
+        for r in results:
+            if r['bboxes'].shape[0] == 0:
+                out.append((jt.zeros((0, 8)), jt.zeros((0,)), jt.zeros((0,), dtype='int32')))
+                continue
+            polys = rotated_box_to_poly(r['bboxes'])
+            out.append((polys, r['scores'], r['labels']))
+        return out
