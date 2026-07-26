@@ -70,6 +70,67 @@ class WarmUpLR(object):
 
 
 @SCHEDULERS.register_module()
+class LinearWarmupMultiStepLR(object):
+    """mmengine `LinearLR(start_factor, by_epoch=False, begin=0, end=warmup_iters)` 与
+    `MultiStepLR(milestones, gamma, by_epoch=True)` 叠加的逐点等价实现
+    （Point2RBox-v2 官方 schedule_1x 的 param_scheduler，PLAN 铁律二 #2）。
+
+    两个 factor 相乘：
+        linear(t) = start_factor + (end_factor-start_factor) * min(t, W-1)/(W-1)，W=warmup_iters
+        step(e)   = gamma ** |{m in milestones : e >= m}|
+        lr(t, e)  = base_lr * linear(t) * step(e)
+
+    ⚠️ 分母是 W-1 不是 W：mmengine 的 LinearParamScheduler 用 `total_iters = end - begin - 1`
+    （与 torch.optim.lr_scheduler.LinearLR 不同），第 W-1 个 iter 即到达 end_factor。
+    实测 dump 确认（tools/dump_lr_mmengine.py），照抄 mmengine，勿"修正"。
+
+    依赖 Runner 在每个 iter 的 optimizer.step **之前**调用
+    `scheduler.step(iter, epoch)`（iter 未自增），即第 i 个 iter 用 f(i)。
+    与 mmengine 的逐点一致性由 tests/parity/test_L1_ops.py 对照
+    tools/dump_lr_mmengine.py 的 golden 序列保证。
+    """
+
+    def __init__(self, optimizer,
+                 start_factor=1.0 / 3,
+                 end_factor=1.0,
+                 warmup_iters=500,
+                 milestones=(8, 11),
+                 gamma=0.1):
+        assert list(milestones) == sorted(milestones)
+        self.optimizer = optimizer
+        self.start_factor = start_factor
+        self.end_factor = end_factor
+        self.warmup_iters = warmup_iters
+        self.milestones = list(milestones)
+        self.gamma = gamma
+        self.base_lr = optimizer.lr
+        self.base_lr_pg = [pg.get("lr", optimizer.lr) for pg in optimizer.param_groups]
+        self.step(0, 0)
+
+    def _factor(self, iters, epochs):
+        denom = max(self.warmup_iters - 1, 1)  # mmengine: total_iters = end - begin - 1
+        t = min(iters, denom)
+        linear = self.start_factor + (self.end_factor - self.start_factor) * t / denom
+        step = self.gamma ** sum(1 for m in self.milestones if epochs >= m)
+        return linear * step
+
+    def step(self, iters, epochs, by_epoch=True):
+        f = self._factor(iters, epochs)
+        self.optimizer.lr = self.base_lr * f
+        for i, param_group in enumerate(self.optimizer.param_groups):
+            param_group["lr"] = self.base_lr_pg[i] * f
+
+    def parameters(self):
+        return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
+
+    def load_parameters(self, data):
+        if isinstance(data, dict):
+            for k, d in data.items():
+                if k in self.__dict__:
+                    self.__dict__[k] = d
+
+
+@SCHEDULERS.register_module()
 class WarmUpLRGroup(object):
     """Warm LR scheduler with warmup learning rates specified upto each parameter group
     Args:

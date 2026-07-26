@@ -117,15 +117,22 @@ class Runner:
     def train(self):
 
         self.model.train()
+        # 等价 mmdet.SetEpochInfoHook：每个 epoch 开始时把 epoch 号注入 model
+        # （Point2RBoxV2 依赖它触发 copy_paste/edge_loss/joint_angle 的 start_epoch）
+        if hasattr(self.model, 'set_epoch'):
+            self.model.set_epoch(self.epoch)
 
         start_time = time.time()
 
         for batch_idx,(images,targets) in enumerate(self.train_dataset):
 
+            # 对齐 mmcv/mmengine 语义：第 i 个 iter 的更新使用 f(i) 的 LR，
+            # 因此在 optimizer.step 之前设置本 iter 的 LR（原先在之后调用，
+            # 实际生效的是 f(i-1)，与 PyTorch 侧存在 1-iter 滞后，warmup 段逐点比对不齐）
+            self.scheduler.step(self.iter,self.epoch,by_epoch=True)
             losses = self.model(images,targets)
             all_loss,losses = parse_losses(losses)
             self.optimizer.step(all_loss)
-            self.scheduler.step(self.iter,self.epoch,by_epoch=True)
             if check_interval(self.iter,self.log_interval) and self.iter>0:
                 batch_size = len(images)*jt.world_size
                 ptime = time.time()-start_time
