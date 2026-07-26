@@ -13,7 +13,14 @@ def det_2x2(m):
     return m[..., 0, 0] * m[..., 1, 1] - m[..., 0, 1] * m[..., 1, 0]
 
 def diag3d(x):
-    return jt.stack([jt.diag(x_) for x_ in x])
+    """batch 对角化/取对角。⚠️ 原实现是 python 循环逐个 jt.diag——每次调用产生
+    O(N) 图节点（N=num_pos 可达上万），惰性图 grad 遍历退化到分钟级（实测训练
+    卡死主因）。改为批量闭式，数值不变。"""
+    if x.ndim == 2:      # (N,2) -> (N,2,2) 对角阵
+        zero = jt.zeros_like(x[:, 0])
+        return jt.stack([x[:, 0], zero, zero, x[:, 1]], dim=-1).reshape(-1, 2, 2)
+    else:                # (N,2,2) -> (N,2) 取对角
+        return jt.stack([x[:, 0, 0], x[:, 1, 1]], dim=-1)
 
 def reduce_loss(loss, reduction='mean'):
     """mmdet.models.losses.utils.reduce_loss 的 Jittor 等价实现。"""
