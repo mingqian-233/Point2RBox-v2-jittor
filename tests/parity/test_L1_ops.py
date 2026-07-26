@@ -260,3 +260,33 @@ class TestClipGrad:
         g = opt.param_groups[0]['grads'][0]
         np.testing.assert_allclose(g.numpy(), np.ones(4), rtol=1e-6)
         opt.zero_grad()
+
+
+class TestDiffIoURotated:
+    """M7：diff_iou_rotated_2d / RotatedIoULoss vs mmcv golden（GPU）。"""
+
+    def test_iou_and_loss(self):
+        import jittor as jt
+        from jdet.ops.diff_iou_rotated import diff_iou_rotated_2d
+        from jdet.models.losses.rotated_iou_loss import RotatedIoULoss
+
+        g = np.load(os.path.join(GOLDEN, 'riou.npz'))
+        jt.flags.use_cuda = 1
+        b1, b2 = jt.array(g['b1']), jt.array(g['b2'])
+        iou = diff_iou_rotated_2d(b1.unsqueeze(0), b2.unsqueeze(0)).squeeze(0)
+        np.testing.assert_allclose(iou.numpy(), g['iou'], rtol=1e-4, atol=1e-5)
+
+        gi = jt.grad(iou.sum(), b1).numpy()
+        loss = RotatedIoULoss(loss_weight=1.0)(b1, b2)
+        rel = abs(float(loss.item()) - float(g['loss'])) / abs(float(g['loss']))
+        gl = jt.grad(loss, b1).numpy()
+        jt.flags.use_cuda = 0
+        assert rel < 1e-4, f'loss rel = {rel}'
+        # 梯度逐行比较；row 0 是完全重合框（IoU=1，重复顶点的子梯度分配任意，
+        # mmcv 的 CUDA 排序与本实现在重复点间分配不同——数学上均为有效子梯度），
+        # 只要求有限；其余行 rel<1e-3
+        for grad, want in [(gi, g['iou_grad']), (gl, g['loss_grad'])]:
+            assert np.isfinite(grad).all()
+            per = np.linalg.norm(grad - want, axis=1) \
+                / (np.linalg.norm(want, axis=1) + 1e-9)
+            assert per[1:].max() < 1e-3, f'nondegenerate max rel = {per[1:].max()}'
