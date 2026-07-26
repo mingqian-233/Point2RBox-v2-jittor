@@ -407,12 +407,22 @@ def voronoi_watershed_loss(mu, sigma, label, image, pos_thres=0.994, neg_thres=0
     V_np = V.detach().numpy()
     L_np = L.detach().numpy()
     L_target_np = np.empty((J, 2), dtype=np.float32)
+    # 逐实例 np.nonzero 是 O(J·HW)（J 上万的密集 patch 卡数分钟）→
+    # 单次 argsort 按 marker id 分桶，总体 O(HW log HW)
+    Hm, Wm = markers_np.shape
+    flat = markers_np.ravel()
+    order = np.argsort(flat, kind='stable')
+    sorted_ids = flat[order]
+    # 每个 id 的像素区间 [lo, hi)
+    los = np.searchsorted(sorted_ids, np.arange(1, J + 1), side='left')
+    his = np.searchsorted(sorted_ids, np.arange(1, J + 1), side='right')
+    ys_all, xs_all = np.divmod(order, Wm)
     for j in range(J):
-        ys, xs = np.nonzero(markers_np == j + 1)
-        if len(xs) == 0:
+        lo, hi = los[j], his[j]
+        if lo == hi:
             L_target_np[j] = L_np[j]
             continue
-        xy_j = np.stack([xs, ys], 1).astype(np.float32) - mu_np[j]
+        xy_j = np.stack([xs_all[lo:hi], ys_all[lo:hi]], 1).astype(np.float32) - mu_np[j]
         xy_j = xy_j @ V_np[j]  # (V^T x)^T = x^T V
         L_target_np[j, 0] = np.abs(xy_j[:, 0]).max() ** 2
         L_target_np[j, 1] = np.abs(xy_j[:, 1]).max() ** 2
