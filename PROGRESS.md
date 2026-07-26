@@ -148,3 +148,23 @@
 ### 当前数字
 - 测试面板：45 passed / 1 skipped（L0×10 + L1×15 + L2×14 + smoke×3 + 其余）
 - 实验 X @GPU0：epoch 2，loss 2.05 稳降，ETA ~7h
+
+---
+
+## 2026-07-26（Day 1，追加：M4 验收达标）
+
+### 做完什么
+- **TestHeadParity 通过**：固定权重（torch state_dict 直传，键名完全一致）+ 固定输入下，
+  6 项 loss_dict 全部 rel<1e-3、feat 梯度对齐 —— M4 数值验收达标
+- 揪出一个**必然导致训练失败的大 bug**：底座 FocalLoss 是 1-based 标签约定
+  （bg=15 会被映射成第 14 类正样本），首次冒烟 loss_cls=2306 暴露 →
+  新写 MMDetFocalLoss（对齐 mmdet py_sigmoid_focal_loss 语义）
+- 修 ConsistencyLoss rot 分支的 GPU matmul 广播（冒烟暴露，CPU 测试测不到）
+- docs/config_parity.md + docs/porting_notes.md 交付文档入库
+- 首次冒烟：跑到 iter 100 无 NaN、warmup LR 曲线正确（2.0e-5→2.33e-5 吻合公式）；
+  已用修复后代码重启验证
+- ⚠️ 速度：首跑 0.4-0.5 fps（与 torch baseline 共卡 + JIT 编译期），折 2-2.5s/iter vs
+  torch 0.38s/iter——待 baseline 让出 GPU 后复测，若仍慢即触发 R5 缓解（bucket padding）
+
+### 测试面板
+- **43 passed / 1 skipped**（L0×10 + L1×15 + L2×15 + smoke×3）
