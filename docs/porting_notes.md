@@ -64,6 +64,16 @@
   `torch.backends.cudnn.allow_tf32 = False; torch.backends.cuda.matmul.allow_tf32 = False`。
 - **torch `ReLU(inplace=True)` 会篡改中间量取证**：dump 中间激活时先 `.clone()` 再过激活，
   否则 pre-act 张量被原地覆盖，逐层对比出现「norm 层 rel=1.0 而 act 后 rel=1e-7」的假象。
+- **GPU 数值 parity 不可用于 bisect / 逐元素断言**（issue #3 结案，2026-07-26 22:00）：
+  jittor conv 前向/反向用 `cudnnFindConvolution*AlgorithmEx` **真实计时**选算法并做
+  **进程内 cache**；cudnn8 在 A100 上 `CUDNN_DEFAULT_MATH` 允许 TF32 tensor-core 算法
+  参与候选。选中 TF32 的进程 GPU-vs-golden 前向 ~4e-4、梯度 rel_l2 ~4e-2（逐元素违约
+  ~22%）；选中 FMA 的进程 ~1e-4。结果「进程内确定、跨进程漂移」，且**换 commit 改图形状
+  会扰动 benchmark 计时** → bisect 会把算法选择的翻转误报成某个 commit 的数值回归
+  （B 对 ba5b766 scatter-add 的 bisect 即此假信号；scatter vs one-hot 实测梯度逐位一致，
+  复现脚本 tools/debug/）。此前文档写的「共卡 cudnn 漂移、偶发 ~4%」是同一现象的
+  不完整解释。对策：梯度验收 = GPU 松验（rel_l2<5e-2，兜断链级 bug）+ CPU 紧验
+  （rel_l2<1e-4）；训练不受影响（TF32 卷积训练是业界默认，torch 侧同样如此）。
 
 ## 工程
 
