@@ -49,6 +49,21 @@
   trace 不变量一致。parity 测试对简并用例只比基无关量。
 - **PSC decode ±π/2 端点**：atan2(∓0,-1) 符号翻转给出 +π/2 vs -π/2，le90 周期 π 下等价，
   按模 π 角距离比较。
+- **diff_iou_rotated 的鞋带公式必须在中心化坐标上算**（2026-07-26，stage-2 parity 揪出）：
+  mmcv 在原始图像坐标（~1e2-1e3）上算，x_i·y_j 项达 1e4-1e6，微小/退化交集依赖正负大项
+  相消；jittor 编译器把 `a*d - b*c` 融合成 FMA 后两项舍入不再互为相反数，残差 ~1e-2 px²
+  变成假面积（golden 上 loss_bbox 差 16%，torch eager 恰好精确抵消得 0）。修法：排序仍在
+  归一化坐标做（不变），面积改在「减均值后再乘 mask 归零填充槽」的坐标上算——闭合多边形
+  鞋带公式平移不变，且填充槽零贡献保持。torch 侧原始坐标的噪声底 ~1e-3 仍留在 golden 的
+  loss_bbox 梯度里，故 FCOS head 梯度紧验走 cls+ctr 支路（1e-4），总梯度 5e-3。
+- **jittor nn.GroupNorm 是一遍式方差** `E[x²]−E[x]²`（灾难性消去风险），torch 是两遍式
+  `E[(x−mean)²]`。底座 BRICKS 'GN' 已换成 `GroupNorm2Pass`（modules.py，签名/参数名兼容）。
+- **golden 若在 CUDA torch 上 dump，必须关 TF32**：torch 2.x 默认 `cudnn.allow_tf32=True`，
+  卷积只有 10 位尾数，前向自带 ~4e-4 相对误差，会整体污染 golden（曾被误判为 GN/实现差异，
+  实际逐层 CPU 对比 conv 输出 rel 1e-7）。dump 脚本统一加
+  `torch.backends.cudnn.allow_tf32 = False; torch.backends.cuda.matmul.allow_tf32 = False`。
+- **torch `ReLU(inplace=True)` 会篡改中间量取证**：dump 中间激活时先 `.clone()` 再过激活，
+  否则 pre-act 张量被原地覆盖，逐层对比出现「norm 层 rel=1.0 而 act 后 rel=1e-7」的假象。
 
 ## 工程
 

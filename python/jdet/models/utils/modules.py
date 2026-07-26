@@ -23,7 +23,47 @@ BRICKS.register_module('BN1d', module=nn.BatchNorm1d)
 BRICKS.register_module('BN2d', module=nn.BatchNorm2d)
 BRICKS.register_module('BN3d', module=nn.BatchNorm3d)
 # BRICKS.register_module('SyncBN', module=SyncBatchNorm)
-BRICKS.register_module('GN', module=nn.GroupNorm)
+
+
+class GroupNorm2Pass(nn.Module):
+    """两遍式 GroupNorm（对齐 torch 数值语义）。
+
+    jittor 自带 nn.GroupNorm 用一遍式 E[x²]−E[x]² 算方差，均值量级大于
+    标准差时发生灾难性消去：实测 stage-2 head 卷积塔前向偏差 ~5e-4、
+    feat 梯度偏差 ~3%（详见 docs/porting_notes.md）。torch 是两遍式
+    E[(x−mean)²]，此处对齐。参数名/签名与 jt.nn.GroupNorm 完全兼容。
+    """
+
+    def __init__(self, num_groups, num_channels, eps=1e-05, affine=True,
+                 is_train=True):
+        from jittor import init
+        self.num_groups = num_groups
+        self.num_channels = num_channels
+        self.eps = eps
+        self.affine = affine
+        self.weight = init.constant((num_channels,), "float32", 1.0) \
+            if affine else 1.0
+        self.bias = init.constant((num_channels,), "float32", 0.0) \
+            if affine else 0.0
+
+    def execute(self, x):
+        N = x.shape[0]
+        C = self.num_channels
+        assert C % self.num_groups == 0
+        output_shape = x.shape if x.ndim == 4 else (N, -1)
+        xg = x.reshape((N, self.num_groups, -1))
+        mean = xg.mean(2, keepdims=True)
+        xc = xg - mean
+        var = (xc * xc).mean(2, keepdims=True)
+        y = xc / jt.sqrt(var + self.eps)
+        y = y.reshape((N, C, -1))
+        if self.affine:
+            y = y * self.weight.reshape((1, C, 1)) \
+                + self.bias.reshape((1, C, 1))
+        return y.reshape(output_shape)
+
+
+BRICKS.register_module('GN', module=GroupNorm2Pass)
 BRICKS.register_module('LN', module=nn.LayerNorm)
 BRICKS.register_module('IN', module=nn.InstanceNorm2d)
 BRICKS.register_module('IN1d', module=nn.InstanceNorm1d)

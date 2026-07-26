@@ -119,9 +119,15 @@ def oriented_box_intersection_2d(corners1, corners2):
     idx_np = sort_indices_np(vertices_normalized.detach().numpy(),
                              mask.detach().numpy().astype(bool))
     idx = jt.array(idx_np.astype(np.int32))
-    # ⚠️ 面积必须在原始坐标上算：填充槽是原始坐标系的 (0,0)（交点无效槽被 mask 置零），
-    # 鞋带公式对其零贡献；归一化坐标下填充点变成 -mean 会破坏面积
-    return calculate_area(idx, vertices)
+    # ⚠️ 面积在「均值中心化 + mask 再归零」的坐标上算：
+    #   - 闭合多边形的鞋带公式平移不变，中心化不改面积；
+    #   - 填充槽必须仍是 (0,0) 才零贡献（裸减 mean 会让它变成 -mean），
+    #     故中心化后乘 mask 把无效槽重新归零；
+    #   - 不能像 mmcv 那样在原始图像坐标上算：坐标 ~1e2-1e3 时 x_i*y_j 项达 1e4-1e6，
+    #     退化/极小交集的正负大项相消，jittor 融合出的 FMA 使两项舍入不再互为相反数，
+    #     残差 ~1e-2 px² 成为假面积（torch eager 恰好精确抵消，golden 上实测差 16%）。
+    vertices_centered = vertices_normalized * mask_f.unsqueeze(-1)
+    return calculate_area(idx, vertices_centered)
 
 
 def box2corners(box):

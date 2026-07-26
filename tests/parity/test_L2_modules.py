@@ -243,13 +243,26 @@ class TestTED:
 
 
 class TestHeadParity:
-    """M4 验收：固定权重+输入下 head 的 loss_dict 各项 rel<1e-3（epoch=1）。"""
+    """M4 验收：固定权重+输入下 head 的 loss_dict 各项 rel<1e-3（epoch=1）。
+
+    梯度比对分两档：GPU 松验（共卡时 cudnn 反向算法漂移，实测 rel_l2 偶发到 ~4%、
+    逐元素违约可达 20%+，只兜 O(1) 级断链/错链 bug）+ CPU 紧验（确定性算术，
+    实测 rel_l2 2.7e-6，阈 1e-4——真正的数值验收）。"""
 
     def test_loss_dict(self):
         import jittor as jt
+        try:
+            jt.flags.use_cuda = 1
+            self._run_gpu()
+            jt.flags.use_cuda = 0
+            self._run_cpu_grad()
+        finally:
+            jt.flags.use_cuda = 0
+
+    def _build(self):
+        import jittor as jt
         from jdet.models.roi_heads.point2rbox_v2_head import Point2RBoxV2Head
 
-        jt.flags.use_cuda = 1
         g = np.load(os.path.join(GOLDEN, 'head_parity.npz'))
         head = Point2RBoxV2Head(
             num_classes=15, in_channels=128, feat_channels=128, strides=[8],
@@ -278,6 +291,11 @@ class TestHeadParity:
 
         feat = jt.array(g['feat'])
         losses = head.loss([feat], targets)
+        total = sum(v.sum() for v in losses.values())
+        grad = jt.grad(total, feat).numpy()
+        return g, losses, grad
+
+    def _check_losses(self, g, losses):
         for k, v in losses.items():
             got = float(v.sum().item())
             want = float(g[f'loss_{k}'])
@@ -286,18 +304,117 @@ class TestHeadParity:
             else:
                 rel = abs(got - want) / abs(want)
                 assert rel < 1e-3, f'{k}: got {got}, want {want}, rel {rel}'
-        # 梯度回传到 feat（对齐 torch）
-        total = sum(v.sum() for v in losses.values())
-        grad = jt.grad(total, feat).numpy()
-        jt.flags.use_cuda = 0
+
+    def _run_gpu(self):
+        g, losses, grad = self._build()
+        self._check_losses(g, losses)
         assert np.isfinite(grad).all()
-        # GPU conv 反向用原子累加，逐元素比较存在非确定性尾部（~0.1% 元素、
-        # 量级极小且逐次波动）；用整体相对 L2 + 违约比例上限做稳健比较
         want = g['feat_grad']
         rel_l2 = np.linalg.norm(grad - want) / (np.linalg.norm(want) + 1e-12)
-        # 与重载训练共卡时 cudnn 反向算法选择会漂移（实测偶发 ~4%，独占 GPU 时 <1e-3）；
-        # 坏梯度 bug（断链/错链）表现为 O(1) 误差，5e-2 阈值仍可兜住。GPU 空闲后复核收紧
-        assert rel_l2 < 5e-2, f'feat_grad 整体相对 L2 = {rel_l2}'
+        assert rel_l2 < 5e-2, f'[GPU] feat_grad 整体相对 L2 = {rel_l2}'
+
+    def _run_cpu_grad(self):
+        g, losses, grad = self._build()
+        self._check_losses(g, losses)
+        want = g['feat_grad']
+        rel_l2 = np.linalg.norm(grad - want) / (np.linalg.norm(want) + 1e-12)
+        assert rel_l2 < 1e-4, f'[CPU] feat_grad 整体相对 L2 = {rel_l2}'
         scale = np.abs(want).max()
-        viol = (np.abs(grad - want) > 5e-2 * np.maximum(np.abs(want), scale * 5e-2)).mean()
-        assert viol < 5e-3, f'feat_grad 逐元素违约比例 = {viol}'
+        viol = (np.abs(grad - want)
+                > 1e-3 * np.maximum(np.abs(want), scale * 1e-3)).mean()
+        assert viol < 1e-4, f'[CPU] feat_grad 逐元素违约比例 = {viol}'
+
+
+class TestFCOSHeadParity:
+    """M7 验收：stage-2 RotatedFCOSHead 固定权重+输入下与 mmrotate 官方对齐。
+
+    golden: tools/dump_golden_fcos_head.py（配置＝官方 rotated-fcos-1x-dota-
+    using-pseudo.py 的 bbox_head，仅缩通道 + conv_reg bias 抬正防退化框；
+    见脚本头注释）。梯度 GPU 松验 + CPU 紧验（同 TestHeadParity 的理由）。
+    """
+
+    def test_forward_and_loss(self):
+        import jittor as jt
+        try:
+            jt.flags.use_cuda = 1
+            self._run(gpu=True)
+            jt.flags.use_cuda = 0
+            self._run(gpu=False)
+        finally:
+            jt.flags.use_cuda = 0  # 失败也要复位，避免污染后续 CPU 测试
+
+    def _run(self, gpu):
+        import jittor as jt
+        from jdet.models.roi_heads.rotated_fcos_head import RotatedFCOSHead
+
+        g = np.load(os.path.join(GOLDEN, 'fcos_head_parity.npz'))
+        head = RotatedFCOSHead(
+            num_classes=15, in_channels=64, feat_channels=64, stacked_convs=2,
+            strides=[8, 16, 32, 64, 128],
+            center_sampling=True, center_sample_radius=1.5,
+            norm_on_bbox=True, centerness_on_reg=True,
+            use_hbbox_loss=False, scale_angle=True,
+            bbox_coder=dict(type='DistanceAnglePointCoder',
+                            angle_version='le90'),
+            loss_cls=dict(type='MMDetFocalLoss', use_sigmoid=True, gamma=2.0,
+                          alpha=0.25, loss_weight=1.0),
+            loss_bbox=dict(type='RotatedIoULoss', loss_weight=1.0),
+            loss_angle=None,
+            loss_centerness=dict(type='MMDetCrossEntropyLoss',
+                                 use_sigmoid=True, loss_weight=1.0))
+        head.train()
+        head.load_parameters({k[3:]: jt.array(g[k])
+                              for k in g.files if k.startswith('w__')})
+
+        feats = [jt.array(g[f'feat{i}']) for i in range(5)]
+        targets = [dict(rboxes=g[f'gt{i}_rb'],
+                        labels=jt.array(g[f'gt{i}_lb'].astype(np.int32)))
+                   for i in range(2)]
+
+        # 前向输出逐层对齐（比 loss 更细粒度）
+        outs = head.forward(feats)
+        for name, group in zip(('cls', 'bbox', 'angle', 'ctr'), outs):
+            for lvl, t in enumerate(group):
+                got = t.numpy()
+                want = g[f'out_{name}{lvl}']
+                rel_l2 = (np.linalg.norm(got - want)
+                          / (np.linalg.norm(want) + 1e-12))
+                assert rel_l2 < 1e-3, f'out_{name}{lvl}: rel L2 = {rel_l2}'
+
+        losses = head.loss_by_feat(*outs, targets)
+        assert set(losses) == {'loss_cls', 'loss_bbox', 'loss_centerness'}
+        for k, v in losses.items():
+            got = float(v.sum().item())
+            want = float(g[f'loss_{k}'])
+            rel = abs(got - want) / max(abs(want), 1e-9)
+            assert rel < 1e-3, f'{k}: got {got}, want {want}, rel {rel}'
+
+        # 梯度回传到各层 feat（golden 是三项 loss 之和的梯度）
+        total = sum(v.sum() for v in losses.values())
+        grads = jt.grad(total, feats)
+        # GPU 共卡 cudnn 漂移只做 5e-2 松验；CPU 全和阈 5e-3：
+        # loss_bbox 反向经 mmcv 的 shoelace（原始图像坐标，大数相消），
+        # golden 梯度自带 ~1e-3 噪声底（TF32 关闭后实测 loss_bbox 部分
+        # rel 0.7-1.3e-3、loss_cls+ctr 部分 1e-6，见 porting_notes.md），
+        # 与我侧中心化坐标实现的差即该噪声（ops/diff_iou_rotated.py 注释）
+        grad_tol = 5e-2 if gpu else 5e-3
+        for i, gr in enumerate(grads):
+            got = gr.numpy()
+            want = g[f'feat{i}_grad']
+            assert np.isfinite(got).all()
+            rel_l2 = (np.linalg.norm(got - want)
+                      / (np.linalg.norm(want) + 1e-12))
+            assert rel_l2 < grad_tol, \
+                f'[{"GPU" if gpu else "CPU"}] feat{i}_grad: rel L2 = {rel_l2}'
+        if not gpu:
+            # 紧验走无 IoU 噪声的支路：loss_cls+loss_centerness 的梯度
+            # 应与 torch 在 1e-4 内逐层吻合（实锤断链/错链类 bug 的防线）
+            grads2 = jt.grad(losses['loss_cls'].sum()
+                             + losses['loss_centerness'].sum(), feats)
+            for i, gr in enumerate(grads2):
+                got = gr.numpy()
+                want = g[f'feat{i}_grad_clsctr']
+                rel_l2 = (np.linalg.norm(got - want)
+                          / (np.linalg.norm(want) + 1e-12))
+                assert rel_l2 < 1e-4, \
+                    f'[CPU] feat{i}_grad_clsctr: rel L2 = {rel_l2}'
