@@ -213,3 +213,25 @@
 ### 巡检（15:40）
 - 实验 X：epoch 3/12 完，loss 1.99 稳降（cls 0.35 / vor 0.92 / ss 0.22），ETA ~23:00
 - Jittor v2：重启后正常，loss 量级同档（cls 0.54 / vor 1.17），偶发 ss 尖峰有 clip 兜底
+
+---
+
+## 2026-07-26（Day 1，追加：训练稳定确认 + L3 达成 + RotatedIoULoss）
+
+### 训练线
+- **Jittor v2 第 5 次启动（17:20，commit ff010a3）后稳定**：iter 4000+ 跨过历史卡死点，
+  fps 2.84（两处对数化修复后反而更快），ETA ~14h。第二处卡点也已根治
+  （L_target 逐实例 np.nonzero O(J·HW) → argsort 分桶 O(HW log HW)）
+- 实验 X：epoch 6/12 完，loss 1.82 稳降（edge loss 预计 epoch7 激活，届时核对）
+
+### M5/M7 硬件完成
+- **RotatedIoULoss / diff_iou_rotated_2d 移植 + parity**：IoU 前向 max diff 5.6e-6、
+  loss 与 mmcv 逐位一致、非退化梯度 rel 3e-5（重合框的重复顶点子梯度 mmcv 亦任意）。
+  关键坑：排序在归一化坐标、面积必须在原始坐标（填充槽零贡献依赖原始系）
+- **L3 达成（静态强形式）**：tools/convert_torch_ckpt.py（键 1:1，0 缺 0 多）+
+  实验 X epoch_6 真实权重整模型前向 parity——cls/bbox/angle 相对 L2
+  1.2e-4 / 6.7e-4 / 1.2e-3。权重转换与全链路数值一次性验证
+- 测试面板 45 passed / 1 skipped（新增 L3）
+
+### 当前数字
+- 全模型前向（真实权重）：cls 1.2e-4 / bbox 6.7e-4 / angle 1.2e-3（相对 L2）
