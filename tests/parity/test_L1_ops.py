@@ -138,6 +138,94 @@ class TestRoIAlignRotated:
         np.testing.assert_allclose(got, want, rtol=1e-4, atol=1e-4)
 
 
+class TestLinalg2x2:
+    """M3 地基：2×2 eigh/solve 闭式解 vs torch.linalg（含 w==h 等退化用例）。"""
+
+    @pytest.fixture(scope='class')
+    def g(self):
+        return np.load(os.path.join(GOLDEN, 'linalg2x2.npz'))
+
+    def test_eigh_eigvals(self, g):
+        import jittor as jt
+        from jdet.ops.linalg2x2 import eigh_2x2
+
+        L, V = eigh_2x2(jt.array(g['sigma']))
+        want = g['eigvals']
+        scale = np.abs(want).max(axis=-1, keepdims=True)  # 每个矩阵按自身量级
+        assert (np.abs(L.numpy() - want) / (scale + 1e-12)).max() < 1e-5
+
+    def test_eigh_eigvecs_reconstruct(self, g):
+        """特征向量符号任意 → 比重建 V diag(L) V^T == sigma 以及正交性。"""
+        import jittor as jt
+        from jdet.ops.linalg2x2 import eigh_2x2, diag_embed_2x2
+
+        sigma = jt.array(g['sigma'])
+        L, V = eigh_2x2(sigma)
+        recon = jt.matmul(jt.matmul(V, diag_embed_2x2(L)), V.transpose(0, 2, 1))
+        diff = np.abs(recon.numpy() - g['sigma'])
+        scale = np.abs(g['sigma']).reshape(len(diff), -1).max(1)[:, None, None]
+        assert (diff / (scale + 1e-12)).max() < 1e-5
+        # 正交性
+        vtv = jt.matmul(V.transpose(0, 2, 1), V).numpy()
+        assert np.abs(vtv - np.eye(2)).max() < 1e-5
+        # 与 torch 特征向量对齐（至符号）：|<v_i, v_i_torch>| == 1。
+        # 仅对非简并矩阵有意义——特征值重复时特征基任意（torch 选 I，我们选旋转基），
+        # 两者都对，只保证上面的重建/正交即可
+        lv = g['eigvals']
+        nondeg = (lv[:, 1] - lv[:, 0]) / (np.abs(lv[:, 1]) + 1e-12) > 1e-4
+        dots = np.abs(np.einsum('nij,nij->nj', V.numpy(), g['eigvecs']))
+        assert np.abs(dots[nondeg] - 1).max() < 1e-4
+
+    def test_eigh_eigval_grad(self, g):
+        import jittor as jt
+        from jdet.ops.linalg2x2 import eigh_2x2
+
+        sigma = jt.array(g['sigma'])
+        L, V = eigh_2x2(sigma)
+        grad = jt.grad((L * jt.array(g['eig_wgt'])).sum(), sigma).numpy()
+        assert np.isfinite(grad).all(), '梯度出现 NaN/Inf（退化情形保护失效）'
+        want = g['eigval_grad']
+        scale = np.abs(want).reshape(len(want), -1).max(1)[:, None, None] + 1e-12
+        # 特征值重复时 dλi/dA 是子梯度、随特征基选择而变（非简并部分才唯一）；
+        # 简并用例只验证基无关的不变量：d(λ1+λ2)/dA = I（trace 的梯度）
+        lv = g['eigvals']
+        nondeg = (lv[:, 1] - lv[:, 0]) / (np.abs(lv[:, 1]) + 1e-12) > 1e-4
+        assert (np.abs(grad - want) / scale)[nondeg].max() < 1e-3
+        gsum = jt.grad(L.sum(), sigma).numpy()
+        assert np.abs(gsum[~nondeg] - np.eye(2)).max() < 1e-5
+
+    def test_eigh_grad_finite_at_exact_isotropy(self):
+        """w==h 完全退化点：torch 在此处梯度也未必稳定，只要求我们有限、无 NaN。"""
+        import jittor as jt
+        from jdet.ops.linalg2x2 import eigh_2x2
+
+        sigma = jt.array(np.stack([np.eye(2, dtype=np.float32) * 64.0] * 3))
+        L, V = eigh_2x2(sigma)
+        grad = jt.grad(L.sum(), sigma).numpy()
+        assert np.isfinite(grad).all()
+
+    def test_solve(self, g):
+        import jittor as jt
+        from jdet.ops.linalg2x2 import solve_2x2
+
+        A, B = jt.array(g['sigma']), jt.array(g['solve_b'])
+        X = solve_2x2(A, B)
+        want = g['solve_x']
+        scale = np.abs(want).reshape(len(want), -1).max(1)[:, None, None] + 1e-12
+        assert (np.abs(X.numpy() - want) / scale).max() < 1e-4
+
+    def test_solve_grad(self, g):
+        import jittor as jt
+        from jdet.ops.linalg2x2 import solve_2x2
+
+        A, B = jt.array(g['sigma']), jt.array(g['solve_b'])
+        grad = jt.grad(solve_2x2(A, B).sum(), A).numpy()
+        assert np.isfinite(grad).all()
+        want = g['solve_grad']
+        scale = np.abs(want).reshape(len(want), -1).max(1)[:, None, None] + 1e-12
+        assert (np.abs(grad - want) / scale).max() < 1e-3
+
+
 class TestClipGrad:
     """C1：AdamW(grad_clip=dict(max_norm=35, norm_type=2)) 裁剪后全局 L2 范数 == 35。"""
 
