@@ -9,15 +9,28 @@ from jdet.utils.registry import LOSSES
 def diag3d(x):
     return jt.stack([jt.diag(x_) for x_ in x])
 
-def reduce_loss(loss, reduction='mean', avg_factor=None):
-    if avg_factor is None:
-        avg_factor = max(loss.shape[0],1)
-
+def reduce_loss(loss, reduction='mean'):
+    """mmdet.models.losses.utils.reduce_loss 的 Jittor 等价实现。"""
     if reduction == 'mean':
-        loss = loss.sum()/avg_factor
+        return loss.mean()
     elif reduction == 'sum':
-        loss = loss.sum()
+        return loss.sum()
+    return loss
 
+
+def weight_reduce_loss(loss, weight=None, reduction='mean', avg_factor=None):
+    """mmdet.models.losses.utils.weight_reduce_loss 的 Jittor 等价实现：
+    逐元素加权 + 归约；avg_factor 模式带 float32 eps 防零除。"""
+    if weight is not None:
+        loss = loss * weight
+    if avg_factor is None:
+        loss = reduce_loss(loss, reduction)
+    else:
+        if reduction == 'mean':
+            eps = 1.1920929e-07  # torch.finfo(torch.float32).eps
+            loss = loss.sum() / (avg_factor + eps)
+        elif reduction != 'none':
+            raise ValueError('avg_factor can not be used with reduction="sum"')
     return loss
 
 def xy_wh_r_2_xy_sigma(xywhr):
@@ -71,7 +84,7 @@ def postprocess(distance, fun='log1p', tau=1.0):
 
 
 
-def gwd_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, normalize=True, reduction='mean', avg_factor=None):
+def gwd_loss(pred, target, weight=None, fun='log1p', tau=1.0, alpha=1.0, normalize=True, reduction='mean', avg_factor=None):
     """Gaussian Wasserstein distance loss.
     Derivation and simplification:
         Given any positive-definite symmetrical 2*2 matrix Z:
@@ -116,7 +129,7 @@ def gwd_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, normalize=True, redu
     whr_distance += diag3d(Sigma_t).sum(-1)
 
     _t_tr = diag3d(nn.bmm(Sigma_p, Sigma_t)).sum(dim=-1)
-    _t_det_sqrt = (jt.linalg.det(Sigma_p) * jt.linalg.det(Sigma_t)).clamp(0).sqrt()
+    _t_det_sqrt = (jt.linalg.det(Sigma_p) * jt.linalg.det(Sigma_t)).clamp(1e-7).sqrt()
     whr_distance = whr_distance + (-2) * (
         (_t_tr + 2 * _t_det_sqrt).clamp(1e-7).sqrt())
 
@@ -128,10 +141,10 @@ def gwd_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, normalize=True, redu
         distance = distance / scale
 
     loss = postprocess(distance, fun=fun, tau=tau)
-    return reduce_loss(loss, reduction, avg_factor)
+    return weight_reduce_loss(loss, weight, reduction, avg_factor)
 
 
-def kld_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
+def kld_loss(pred, target, weight=None, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
     """Kullback-Leibler Divergence loss.
     Args:
         pred (jittor.Var): Predicted bboxes.
@@ -171,10 +184,10 @@ def kld_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction
     distance = distance.reshape(_shape[:-1])
 
     loss = postprocess(distance, fun=fun, tau=tau)
-    return reduce_loss(loss, reduction, avg_factor)
+    return weight_reduce_loss(loss, weight, reduction, avg_factor)
 
 
-def jd_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
+def jd_loss(pred, target, weight=None, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
     """Symmetrical Kullback-Leibler Divergence loss.
     Args:
         pred (jittor.Var): Predicted bboxes.
@@ -206,10 +219,10 @@ def jd_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction=
     if sqrt:
         jd = jd.clamp(1e-7).sqrt()
     loss = postprocess(jd, fun=fun, tau=tau)
-    return reduce_loss(loss, reduction, avg_factor)
+    return weight_reduce_loss(loss, weight, reduction, avg_factor)
 
 
-def kld_symmax_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
+def kld_symmax_loss(pred, target, weight=None, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
     """Symmetrical Max Kullback-Leibler Divergence loss.
     Args:
         pred (jittor.Var): Predicted bboxes.
@@ -239,10 +252,10 @@ def kld_symmax_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, re
         reduction='none')
     kld_symmax = jt.max(kld_pt, kld_tp)
     loss = postprocess(kld_symmax, fun=fun, tau=tau)
-    return reduce_loss(loss, reduction, avg_factor)
+    return weight_reduce_loss(loss, weight, reduction, avg_factor)
 
 
-def kld_symmin_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
+def kld_symmin_loss(pred, target, weight=None, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, reduction='mean', avg_factor=None):
     """Symmetrical Min Kullback-Leibler Divergence loss.
     Args:
         pred (jittor.Var): Predicted bboxes.
@@ -272,7 +285,7 @@ def kld_symmin_loss(pred, target, fun='log1p', tau=1.0, alpha=1.0, sqrt=True, re
         reduction='none')
     kld_symmin = jt.min(kld_pt, kld_tp)
     loss = postprocess(kld_symmin, fun=fun, tau=tau)
-    return reduce_loss(loss, reduction, avg_factor)
+    return weight_reduce_loss(loss, weight, reduction, avg_factor)
 
 
 @LOSSES.register_module()
@@ -343,21 +356,21 @@ class GDLoss(nn.Module):
                override the original reduction method of the loss.
                Defaults to None.
         """
+        # 与 mmrotate GDLoss.forward 逐行对齐：weight 逐元素加权（经 weight_reduce_loss），
+        # 不做 mask 过滤（原底座实现 weight=None 会崩、且加权语义与 mmdet 不一致）
         assert reduction_override in (None, 'none', 'mean', 'sum')
         reduction = (
             reduction_override if reduction_override else self.reduction)
         if (weight is not None) and (not jt.any(weight > 0)) and (reduction != 'none'):
-            mask = (weight > 0).detach()
-            return (pred[mask] * weight[mask].reshape(-1, 1)).sum()
+            if pred.ndim == weight.ndim + 1:
+                weight = weight.unsqueeze(1)
+            return (pred * weight).sum()  # 0
         if weight is not None and weight.ndim > 1:
             assert weight.shape == pred.shape
             weight = weight.mean(-1)
         _kwargs = deepcopy(self.kwargs)
         _kwargs.update(kwargs)
 
-        mask = (weight > 0)
-        pred = pred[mask]
-        target = target[mask]
         pred = self.preprocess(pred)
         target = self.preprocess(target)
 
@@ -367,6 +380,7 @@ class GDLoss(nn.Module):
             fun=self.fun,
             tau=self.tau,
             alpha=self.alpha,
+            weight=weight,
             avg_factor=avg_factor,
             reduction=reduction,
             **_kwargs) * self.loss_weight
