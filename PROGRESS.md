@@ -31,7 +31,7 @@
 - 无阻塞。
 
 ### 明天做什么
-- M1 收尾：`tools/derive_scope.py` 机械化闭包 → `docs/port_scope.md` → push
+- ~~M1 收尾~~（当天已完成：derive_scope.py + port_scope.md 已产出）
 - M2 开工：C1 梯度裁剪 / C2 组合 LR 调度（B 依赖，优先）
 - L0 config parity 测试骨架
 

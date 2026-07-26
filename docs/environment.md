@@ -70,8 +70,10 @@ jittor 自带 jtcuda 的 nvcc 是 11.2，在 Ubuntu 24.04 上：
 | g++-11（计划里的预案） | ❌ nvcc 前端不认带参数的 `__attribute__((__malloc__(x,y)))`（glibc 2.34+ 在 GCC≥11 时启用） |
 | **g++-10** | ✅ 全部编译通过 |
 
-修复：`apt-get install g++-10`，并 `conda env config vars set cc_path=/usr/bin/g++-10 -n p2r-jittor`
-（jittor 读 `cc_path` 环境变量选编译器，nvcc 的 `-ccbin` 跟随它）。
+修复：`apt-get install g++-10`，并在 env 的 `etc/conda/activate.d/jittor_cc.sh` 里
+`export cc_path=/usr/bin/g++-10`（jittor 读 `cc_path` 环境变量选编译器，nvcc 的 `-ccbin` 跟随它）。
+⚠️ **不能用 `conda env config vars set`**：conda 26.x 会把变量名导出成大写 `CC_PATH`，
+jittor 只认小写，静默不生效（B 实测踩坑，2026-07-26 12:33）。
 注意：数值垃圾问题（坑 #1）与编译器无关——g++-10/13 下都复现，钉 numpy 才是修复。
 
 ### 坑 #3：conda 26.x 首次使用需接受 ToS

@@ -36,8 +36,12 @@ conda activate p2r-jittor
 pip install jittor==1.3.8.5
 # ⚠️ 关键：jittor 1.3.8.5 + numpy>=2 会静默产出错误数值（无报错！），必须钉死 1.26.4
 pip install numpy==1.26.4
-# ⚠️ 关键：jittor 编译必须用 g++-10（写进 env 变量，conda activate 自动生效）
-conda env config vars set cc_path=/usr/bin/g++-10 -n p2r-jittor
+# ⚠️ 关键：jittor 编译必须用 g++-10。注意不能用 `conda env config vars set`——
+# conda 26.x 会把变量名导出成大写 CC_PATH，而 jittor 只认小写 cc_path。用 activate.d 脚本：
+ENVDIR="$MINICONDA_PREFIX/envs/p2r-jittor"
+mkdir -p "$ENVDIR/etc/conda/activate.d" "$ENVDIR/etc/conda/deactivate.d"
+printf 'export cc_path=/usr/bin/g++-10\n' > "$ENVDIR/etc/conda/activate.d/jittor_cc.sh"
+printf 'unset cc_path\n' > "$ENVDIR/etc/conda/deactivate.d/jittor_cc.sh"
 conda deactivate && conda activate p2r-jittor
 # 首次 import 会自动下载 jtcuda(cuda11.2_cudnn8) 并编译内核（数分钟）
 python -m jittor_utils.install_cuda || true
