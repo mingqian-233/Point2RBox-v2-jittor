@@ -62,7 +62,9 @@ class P2RV2DOTADataset(CustomDataset):
                            shuffle=shuffle, drop_last=drop_last,
                            buffer_size=buffer_size)
         from .transforms import Compose
-        self.CLASSES = get_classes_by_name('DOTA' + version)
+        # 子类（mm_datasets.py）以类属性形式给出 CLASSES；未给出时按 DOTA 版本取
+        if getattr(self, 'CLASSES', None) is None:
+            self.CLASSES = get_classes_by_name('DOTA' + version)
         self.cls2idx = {c: i for i, c in enumerate(self.CLASSES)}
         self.images_dir = os.path.abspath(images_dir)
         self.annfiles_dir = os.path.abspath(annfiles_dir)
@@ -104,7 +106,7 @@ class P2RV2DOTADataset(CustomDataset):
             polys = np.array(polys, dtype=np.float32).reshape(-1, 8)
             rboxes = poly2rbox_le90_np(polys)
             img_infos.append(dict(
-                filename=fname[:-4] + '.png',
+                filename=fname[:-4] + getattr(self, 'IMG_SUFFIX', '.png'),
                 ann=dict(bboxes=rboxes,
                          labels=np.array(labels, dtype=np.int32),
                          bboxes_ignore=np.zeros((0, 5), dtype=np.float32),
@@ -162,6 +164,14 @@ class P2RV2DOTADataset(CustomDataset):
         anno = img_info['ann']
 
         img_path = os.path.join(self.images_dir, img_info['filename'])
+        if not os.path.exists(img_path):
+            # RSAR 等数据集图像扩展名不统一（ref 按 glob 实际文件取），逐一回退
+            stem = os.path.splitext(img_info['filename'])[0]
+            for ext in ('.png', '.jpg', '.jpeg', '.bmp', '.tif'):
+                cand = os.path.join(self.images_dir, stem + ext)
+                if os.path.exists(cand):
+                    img_path = cand
+                    break
         image = Image.open(img_path).convert('RGB')
         width, height = image.size
 

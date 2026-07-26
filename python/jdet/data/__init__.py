@@ -8,3 +8,5 @@ from .yolo import YoloDataset
 from .h2rbox_data import DOTAWSOODDataset
 from .whollywood_dota import WhollyWoodDOTADataset
 from .p2rv2_dota import P2RV2DOTADataset, MMRotateRandomFlip
+from .mm_datasets import (DOTAv15Dataset, DOTAv2Dataset, STARDataset,
+                          RSARDataset, OCDPCBDataset)

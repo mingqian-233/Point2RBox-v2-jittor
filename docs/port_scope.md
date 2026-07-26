@@ -44,6 +44,28 @@ SetEpochInfoHook 等 → M2 的 C1–C4；mmdet.ResNet/FPN/FocalLoss 等 → 底
   - DOTA 标注格式系（dior/star/rsar/…）→ 从 DOTA loader 派生换 METAINFO，每个约十几分钟
   - 异构格式（hrsc=XML、sku110k=csv、sardet100k=COCO、diatom/ocdpcb）→ 排交付后期，
     必须能 import 能实例化；来不及则在此文件显式登记未完成项
+
+### 数据集移植清单（2026-07-26 实做核查后更新）
+
+实读 ref 源码后格式归属与上面的预估有出入（dior/fair 实为 XML、ocdpcb 实为 DOTA-txt）：
+
+| 数据集 | ref 实际格式 | 状态 |
+|---|---|---|
+| DOTA v1.0 | DOTA-txt | ✅ `p2rv2_dota.py::P2RV2DOTADataset`（主线，全 parity） |
+| DOTA v1.5 / v2.0 | DOTA-txt | ✅ `mm_datasets.py`（16/18 类，METAINFO 逐字对齐） |
+| STAR | DOTA-txt（48 类，跳未知类） | ✅ `mm_datasets.py` |
+| RSAR | DOTA-txt（6 类，图像扩展名不统一） | ✅ `mm_datasets.py`（基类扩展名回退） |
+| OCD-PCB | DOTA-txt（41 类，.png） | ✅ `mm_datasets.py` |
+| DIOR | **XML**（两分支均读 `Annotations/*.xml`） | ⬜ 未移植（登记项） |
+| FAIR1M | **XML**（`possibleresult`/`points`；底座 `fair.py` 是 JDet 原生版非 mmrotate 语义） | ⬜ 未移植（登记项） |
+| HRSC2016 | XML | ⬜ 未移植（登记项） |
+| DIATOM | XML（单类） | ⬜ 未移植（登记项） |
+| SKU110K | 图像目录 + json 分支（单类） | ⬜ 未移植（登记项） |
+| SARDet-100k | COCO（BaseDetDataset） | ⬜ 未移植（登记项） |
+
+冒烟测试：`tests/smoke/test_mm_datasets.py`（注册/实例化/标签映射/difficulty 过滤/
+未知类跳过/空图过滤/RSAR 扩展名回退/基类回归，全绿）。
+XML/COCO 系 v2 复现主线用不到（主线只在 DOTA-v1.0 训练），故按本节第 3 条延后并在此登记。
 - 数据集 config（`configs/_base_/datasets/`）：**全部 19 个**
 - 注册链：`datasets/__init__.py`、`structures/bbox/*`、`evaluation/**/__init__.py`
 
