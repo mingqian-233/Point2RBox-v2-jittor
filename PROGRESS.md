@@ -65,3 +65,29 @@
 ### 当前数字
 - L1 LR 序列 parity：max 相对误差 < 1e-9（1440 点）
 - C1 裁剪范数：|35.0000 - 35| < 1e-3
+
+---
+
+## 2026-07-26（Day 1，追加：实验 X 开跑 + M2.5 完成）
+
+### 做完什么
+- **实验 X（PyTorch 官方 baseline）在 GPU 0 开跑**（12:53 起，B 的 split_ss_dota 校验通过后立即启动）
+  - 6400 iter/epoch（与 B 对账数一致），iter50 lr=1.994e-5（吻合 warmup 公式），
+    loss_bbox_edg=0（epoch 6 才启动，符合预期），ETA ~9h。监控已挂（NaN/崩溃/epoch 边界）
+  - 踩坑：需 `third_parties` symlink（ted.pth 相对 cwd 加载）+ mobile_sam.pt 完整版
+- **M2.5 复用件核对全部完成**，测试面板 20 passed / 1 skipped：
+  - GDLoss：修正底座 3 处与 mmrotate 的语义差异（execute 的 mask过滤→weighted_loss 语义、
+    gwd det clamp 0→1e-7、reduce mean）；前向/梯度/加权路径 parity 全过
+  - PSCCoder：修底座 `axis=` 残留（torch 风格，jittor 需 `dim=`）；encode/decode 过
+    （decode ±π/2 端点 atan2 符号翻转，le90 下等价朝向，按模 π 角距离比较）
+  - box_iou_rotated / nms_rotated：与 mmcv 一致。**已知差异**：jdet nms keep 原始顺序 vs
+    mmcv 分数降序（M4 head 层要 sort 后截断 max_per_img）
+  - ROIAlignRotated：加 mmcv 语义 aligned/clockwise 参数。**实测 JDet 原生方向 =
+    mmcv clockwise=True**；EdgeLoss 用法 = (49, scale, ratio, aligned=True, clockwise=True)
+- COORD 已回复 B（RoIAlignRotated 结论 + nms 顺序差异警告）
+
+### 明天做什么（实际今天继续）
+- M3：ops/linalg2x2.py（2×2 eigh/solve 闭式解，w==h eps 处理）→ 四个 loss 逐个移植
+- M3 完成打 tag core-stable（计划 §3 与 M4 验收表述不一致，按 §3 的 M3 时点执行，
+  B 正在等 tag 开工他的 M5）
+- C4（DOTA COCO json + DOTAMetric）排在 M3 后（只有我的 stage-2 依赖，B 不等它）
