@@ -189,3 +189,27 @@
 ### 测试面板
 - 43 passed / 1 skipped（head feat 梯度改稳健度量：整体相对 L2<1e-3 + 违约<0.2%，
   GPU conv 反向原子累加有 ~0.1% 非确定尾部）
+
+---
+
+## 2026-07-26（Day 1，追加：训练死锁处置 + M7 准备）
+
+### 事件：jittor dataloader 死锁（15:05）
+- 正式训练 40min 后卡死：py-spy 确诊 worker 卡 `buffer.send`（环形缓冲满）、
+  主进程卡 `idqueue.pop`（等 worker 信号）——jittor 多进程 dataset 的竞态死锁
+- `[plan-deviation]` num_workers 2→0（加载性能参数，不动任何数值语义）；
+  15:14 重启（该 run 为正式 M6 run），实测 fps 2.0（慢 ~15%），ETA ~21h（共卡），
+  已跑过原死锁点无复发
+- ⚠️ 遗留：跑着的进程加载的是 execute 分发修复前的代码，epoch 12 的 val 会
+  走错分支——届时 kill 前确保 ckpt_12 已存，用新代码离线跑 val/test
+
+### M7 准备完成
+- detector.execute 分发修复（eval 带 GT targets 误入 forward_train）
+- C4a 完成：P2RV2DOTADataset 支持 ann_json（COCO bbox.json 读取，往返测试过）
+- tools/generate_pseudo_labels.py：输出与 mmrotate DOTAMetric.results2json 逐字段一致
+- 发现：底座 FCOSHead 已是带角度分支的 rotated FCOS → stage-2 剩余工作 =
+  语义核对 + RotatedIoULoss（可微旋转 IoU 移植）+ config
+
+### 巡检（15:40）
+- 实验 X：epoch 3/12 完，loss 1.99 稳降（cls 0.35 / vor 0.92 / ss 0.22），ETA ~23:00
+- Jittor v2：重启后正常，loss 量级同档（cls 0.54 / vor 1.17），偶发 ss 尖峰有 clip 兜底
