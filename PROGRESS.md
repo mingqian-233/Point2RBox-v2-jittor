@@ -311,3 +311,6 @@
   产物 data/split_ss_dota/point2rbox_v2_pseudo_labels.bbox.json）——
   作为 M7 伪标签 C4b json diff 的对照物 + 若 Jittor ckpt 有闪失时 stage-2 的备胎输入
 - Jittor v2 epoch 2 完成时 fps 2.97，ETA 明晨 ~10:30
+- pseudo-generator（X ckpt）完成：245,953 框 / 12,800 图，41.8MB json；
+  已用我方 P2RV2DOTADataset._load_json 完整加载验证（字段/类别/尺寸全对）——
+  stage-2 输入路径经真实产物打通，明天 C4b diff 的对照物就绪
