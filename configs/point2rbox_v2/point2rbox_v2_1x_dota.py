@@ -121,7 +121,8 @@ dataset = dict(
                  to_bgr=False),
         ],
         batch_size=16,                # 官方 val batch_size=16
-        num_workers=2,
+        # [plan-deviation] 同 train：评测也走同一 Jittor ring-buffer 实现。
+        num_workers=0,
         shuffle=False),
     test=dict(
         type='ImageDataset',
@@ -134,7 +135,8 @@ dataset = dict(
                  to_bgr=False),
         ],
         batch_size=4,                 # 官方 test batch_size=4
-        num_workers=2,
+        # [plan-deviation] 同 train：仅加载性能变化，不改样本或数值语义。
+        num_workers=0,
         shuffle=False))
 
 # 官方 optim_wrapper（§6.1）：AdamW(_delete_=True) 但 clip_grad 仍生效（铁律二 #1）

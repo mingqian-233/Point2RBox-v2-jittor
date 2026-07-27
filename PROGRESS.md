@@ -331,3 +331,7 @@
   用 41.8MB 官方产物自比通过并发现/备案其唯一退化框
   `P2578__1024__24___403: bbox=[-9.000015,577.5,0,0,0]`，比较器按铁律保留零尺寸并
   单列 `degenerate_boxes`，仅负尺寸判非法。纯 CPU 单测 3 passed。
+- 将 stage-1 val/test 的 `num_workers` 也统一设为 0：Jittor ring-buffer 死锁属于
+  Dataset 多进程公共路径，不只影响 train；该偏差仍仅改变加载性能。当前训练进程已在
+  启动时构造了旧 val/test dataset，若自动评测末尾触发死锁，直接用 ckpt_12 + 新 config
+  离线 `--task=val/test`，不重训。L0 + compare smoke：16 passed / 1 skipped。
