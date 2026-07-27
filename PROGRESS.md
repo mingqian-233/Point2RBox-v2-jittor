@@ -335,3 +335,7 @@
   Dataset 多进程公共路径，不只影响 train；该偏差仍仅改变加载性能。当前训练进程已在
   启动时构造了旧 val/test dataset，若自动评测末尾触发死锁，直接用 ckpt_12 + 新 config
   离线 `--task=val/test`，不重训。L0 + compare smoke：16 passed / 1 skipped。
+- 补齐此前 scope 写明但仓库漏落盘的 `configs/_base_/datasets/` **全部 19 份**：
+  从 ref 逐字节同步，作为 MMEngine 官方 pipeline/config 基线；JDet 可运行配置仍用
+  `configs/point2rbox_v2/` 的展平版本。新增 inventory + byte-parity 测试，与 loader
+  smoke 合跑 8 passed。至此铁律三第 2 层的 definitions/configs/registrations 三项闭环。

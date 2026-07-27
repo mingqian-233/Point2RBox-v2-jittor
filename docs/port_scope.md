@@ -67,7 +67,8 @@ SetEpochInfoHook 等 → M2 的 C1–C4；mmdet.ResNet/FPN/FocalLoss 等 → 底
 未知类跳过/空图过滤/RSAR 扩展名回退/基类回归，全绿）。
 异构 loaders 复用 Agent B 已做过的实现并在 A 仓库重新验收；测试见
 `tests/smoke/test_heterogeneous_datasets.py`（注册、ref 类别表、合成 XML/JSON 解析）。
-- 数据集 config（`configs/_base_/datasets/`）：**全部 19 个**
+- 数据集 config（`configs/_base_/datasets/`）：✅ **全部 19 个**逐字节同步上游；
+  `tests/parity/test_tier2_dataset_configs.py` 锁定文件集合与 byte parity
 - 注册链：`datasets/__init__.py`、`structures/bbox/*`、`evaluation/**/__init__.py`
 
 ## 第 3 层 — 不移植（黑名单）
