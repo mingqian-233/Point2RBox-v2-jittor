@@ -102,6 +102,11 @@ python tools/generate_pseudo_labels.py \
     --ckpt=work_dirs/point2rbox_v2_1x_dota/checkpoints/ckpt_12.pkl \
     --out=data/point2rbox_v2_pseudo_labels
 
+# optional parity report against an official-mmrotate pseudo-label export
+python tools/compare_pseudo_labels.py \
+    /path/to/mmrotate/point2rbox_v2_pseudo_labels.bbox.json \
+    data/point2rbox_v2_pseudo_labels.bbox.json
+
 # 2. train rotated FCOS on the pseudo labels:
 python tools/run_net.py --config-file=configs/point2rbox_v2/rotated_fcos_1x_dota_using_pseudo.py --task=train
 ```

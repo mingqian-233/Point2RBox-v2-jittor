@@ -326,3 +326,8 @@
 - 新增 `tests/smoke/test_heterogeneous_datasets.py`：ref METAINFO 类别表逐字对照，
   合成 XML/JSON 标注实例化和 rbox/label 断言。与原 dataset/import smoke 合跑
   **9 passed**。
+- 新增 `tools/compare_pseudo_labels.py`：schema、图像/类别覆盖、逐类数量、宽高比、
+  角度直方图 JS divergence，以及记录对齐时的 bbox delta；CLI 阈值失败返回非零。
+  用 41.8MB 官方产物自比通过并发现/备案其唯一退化框
+  `P2578__1024__24___403: bbox=[-9.000015,577.5,0,0,0]`，比较器按铁律保留零尺寸并
+  单列 `degenerate_boxes`，仅负尺寸判非法。纯 CPU 单测 3 passed。
