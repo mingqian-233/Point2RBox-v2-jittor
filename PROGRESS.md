@@ -314,3 +314,15 @@
 - pseudo-generator（X ckpt）完成：245,953 框 / 12,800 图，41.8MB json；
   已用我方 P2RV2DOTADataset._load_json 完整加载验证（字段/类别/尺寸全对）——
   stage-2 输入路径经真实产物打通，明天 C4b diff 的对照物就绪
+
+## Day 2 凌晨（03:02-04:00）——epoch 6 开关与 Tier-2 数据集收口
+
+- Jittor v2 已保存 `ckpt_6.pkl` 并进入 0-based `epoch:6`：EdgeLoss 从 0 准时切换为
+  非零（首批 0.248，后续稳定有值），证明 epoch 注入与官方开关生效。
+  iter 43150 时 fps 3.27、无 NaN/崩溃，ETA 约 5h43m。
+- 复用 Agent B 的已验证实现，补齐铁律三第 2 层异构数据集：
+  DIOR/HRSC/DIATOM XML、SKU110K json、SARDet-100K/附加 SAR 集 COCO json；
+  STAR/RSAR/OCDPCB 继续以 A 的 `mm_datasets.py` 为唯一注册源，合流时去掉重复注册。
+- 新增 `tests/smoke/test_heterogeneous_datasets.py`：ref METAINFO 类别表逐字对照，
+  合成 XML/JSON 标注实例化和 rbox/label 断言。与原 dataset/import smoke 合跑
+  **9 passed**。

@@ -1,4 +1,4 @@
-# 项目状态一览（快照：2026-07-26 22:00，Day 1 晚）
+# 项目状态一览（快照：2026-07-27 04:00，Day 2 凌晨）
 
 > 给后来接手者的单页地图。历史细节看 `PROGRESS.md`（追加式日报），
 > 本文只保留"现在是什么状态、东西在哪、接下来做什么"。
@@ -7,7 +7,7 @@
 ## 一句话
 
 把 Point2RBox-v2 从 PyTorch/mmrotate 移植到 Jittor/JDet 并在 DOTA-v1.0 复现精度。
-**Day 1 完成了 M0→M4 全部 + M7 全部代码件；两条 12-epoch 训练在跑；
+**Day 1 完成了 M0→M4 全部 + M7 全部代码件；PyTorch 基线已收官，Jittor 12-epoch 在跑；
 所有移植均有数值 parity 测试背书（49 commits，45+ tests 全绿）。**
 
 ## 里程碑状态
@@ -20,19 +20,19 @@
 | M3 四个 loss + tag **core-stable** | ✅ | 前向<1e-4 / 梯度<1e-3，B 已 merge |
 | M4 head+detector+数据集+config | ✅ | **固定权重下 6 项 loss_dict 与 torch rel<1e-3** |
 | L0/L1/L2/L3 测试体系 | ✅ | L3=真实训练权重整模型前向 rel L2 ≤1.2e-3 |
-| M6 端到端训练（实验 #1） | 🔄 在跑 | 见下"在跑的东西" |
-| 实验 X（PyTorch baseline 对照组） | 🔄 epoch 8/12 | ETA 今晚 ~23:30 |
+| M6 端到端训练（实验 #1） | 🔄 0-based epoch 6/12 | EdgeLoss 已按时启用，见下"在跑的东西" |
+| 实验 X（PyTorch baseline 对照组） | ✅ | 12ep，val mAP50 **54.50** |
 | M7 两阶段（代码件） | ✅ 全 parity | FCOS head golden：loss≤1e-3、cls+ctr 梯度≤1e-4（CPU 紧验） |
 | M7 两阶段（执行） | ⬜ 等 #1 ckpt | 明天 |
-| 第 2 层数据集 loaders | ✅ DOTA-txt 系 | `mm_datasets.py`（v1.5/v2/STAR/RSAR/OCDPCB）；XML/COCO 系登记于 port_scope |
+| 第 2 层数据集 loaders | ✅ | DOTA-txt + DIOR/HRSC/DIATOM/SKU110K/SARDet COCO 均注册并通过合成解析 |
 | M8 交付（README/HF/提交包） | 🔄 README 已重写 | 结果表 TBD 等训练；HF/提交包等 ckpt |
 
 ## 在跑的东西（重启后自查这里）
 
 | 任务 | 命令/日志 | 状态 |
 |---|---|---|
-| 实验 X：PyTorch baseline | `/root/work/A/torch_baseline/logs/expX_*.log`，work_dir 同目录 | epoch 8/12，loss 稳降，edge loss epoch7 已激活 |
-| Jittor v2 正式 12ep | 仓库根 `logs/train_v2_official.log`，`work_dirs/point2rbox_v2_1x_dota/` | 19:07 起（commit 0813ffe 含全部修复），ETA 明天中午 |
+| 实验 X：PyTorch baseline | `/root/work/A/torch_baseline/logs/expX_*.log`，work_dir 同目录 | ✅ 12ep，mAP50=54.50；官方伪标签 245,953 条 |
+| Jittor v2 正式 12ep | 仓库根 `logs/train_v2_official.log`，`work_dirs/point2rbox_v2_1x_dota/` | 20:00 起（commit ba5b766），epoch 6 EdgeLoss 已启用 |
 | 训练启动命令 | `CUDA_VISIBLE_DEVICES=0 cc_path=/usr/bin/g++-10 python tools/run_net.py --config-file=configs/point2rbox_v2/point2rbox_v2_1x_dota.py --task=train` | ⚠️ 必须从仓库根启动；启动后必须验证进程存活 |
 | GPU 纪律 | A=GPU0，B=GPU1，GPU2/3 用户自用**禁碰** | kill 前必须 `ps -o cmd` 核对（见事故） |
 
@@ -57,14 +57,13 @@
 
 ## 剩余工作（依赖序）
 
-1. 【等 X ckpt，今晚】X 的 val mAP → 确立本机 baseline 验收线（±1.0 mAP50）；
-   X ckpt 跑官方 pseudo-generator → M7 伪标签对照物 + C4b json diff
-2. 【等 Jittor ckpt，明天】val/test 评测 → 打 tag `v2-stable` → 伪标签生成
+1. 【完成】X mAP50=54.50，Jittor 验收线 [53.5,55.5]；官方 pseudo-generator
+   对照物已生成（245,953 条 / 12,800 图）。
+2. 【等 Jittor ckpt】val/test 评测 → 打 tag `v2-stable` → 伪标签生成
    （`tools/generate_pseudo_labels.py`）→ stage-2 训练（config 已备）
 3. `--task=test` 的 merge_patches 验证 + DOTA 提交包
 4. M8 收尾：结果表回填 README / HF 上传 / 20-iter 曲线对照补充
-5. （可选）XML/COCO 系数据集 loaders（DIOR/FAIR/HRSC/DIATOM/SKU110K/SARDet），
-   已在 port_scope.md 登记，主线不依赖
+5. 【完成】XML/COCO 系数据集 loaders；FAIR 复用底座 XML→DOTA 预处理链。
 
 注：22:00 起底座 GN 换成两遍式 `GroupNorm2Pass`、diff_iou 改中心化坐标（0a55c59）。
 正在跑的 v2 训练进程加载的是启动时的旧代码：diff_iou 不在 v2 路径上；一遍式 GN

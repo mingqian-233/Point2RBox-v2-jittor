@@ -73,6 +73,11 @@ class SARDet100kDataset(COCORBoxDataset):
 
 
 @DATASETS.register_module()
+class SAR_Det_Finegrained_Dataset(SARDet100kDataset):
+    """官方 config 使用的精确 registry 名；保留友好的别名类。"""
+
+
+@DATASETS.register_module()
 class SRSDDDataset(COCORBoxDataset):
     """ref configs/_base_/datasets/srsdd.py 的 metainfo.classes（6 类船型）。"""
     CLASSES = ('Container', 'Dredger', 'LawEnforce', 'Cell-Container',

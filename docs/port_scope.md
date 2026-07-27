@@ -56,16 +56,17 @@ SetEpochInfoHook 等 → M2 的 C1–C4；mmdet.ResNet/FPN/FocalLoss 等 → 底
 | STAR | DOTA-txt（48 类，跳未知类） | ✅ `mm_datasets.py` |
 | RSAR | DOTA-txt（6 类，图像扩展名不统一） | ✅ `mm_datasets.py`（基类扩展名回退） |
 | OCD-PCB | DOTA-txt（41 类，.png） | ✅ `mm_datasets.py` |
-| DIOR | **XML**（两分支均读 `Annotations/*.xml`） | ⬜ 未移植（登记项） |
-| FAIR1M | **XML**（`possibleresult`/`points`；底座 `fair.py` 是 JDet 原生版非 mmrotate 语义） | ⬜ 未移植（登记项） |
-| HRSC2016 | XML | ⬜ 未移植（登记项） |
-| DIATOM | XML（单类） | ⬜ 未移植（登记项） |
-| SKU110K | 图像目录 + json 分支（单类） | ⬜ 未移植（登记项） |
-| SARDet-100k | COCO（BaseDetDataset） | ⬜ 未移植（登记项） |
+| DIOR | **XML**（两分支均读 `Annotations/*.xml`） | ✅ `dior.py`（robndbox 8 点；支持 train+val id 列表） |
+| FAIR1M | XML 原图，经官方预处理转 DOTA-txt | ✅ 复用底座 `fair.py` + `devkits/fair_to_dota.py` 既有链路 |
+| HRSC2016 | XML | ✅ `hrsc.py`（mbox cx/cy/w/h/angle，默认单类语义） |
+| DIATOM | XML（单类） | ✅ `diatom.py`（hbb → rbox(angle=0)） |
+| SKU110K | 图像目录 + json 分支（单类） | ✅ `sku110k.py`（rbbox 优先，兼容 hbb） |
+| SARDet-100k | COCO（BaseDetDataset） | ✅ `coco_rbox.py`（COCO bbox/8 点 segmentation → rbox） |
 
 冒烟测试：`tests/smoke/test_mm_datasets.py`（注册/实例化/标签映射/difficulty 过滤/
 未知类跳过/空图过滤/RSAR 扩展名回退/基类回归，全绿）。
-XML/COCO 系 v2 复现主线用不到（主线只在 DOTA-v1.0 训练），故按本节第 3 条延后并在此登记。
+异构 loaders 复用 Agent B 已做过的实现并在 A 仓库重新验收；测试见
+`tests/smoke/test_heterogeneous_datasets.py`（注册、ref 类别表、合成 XML/JSON 解析）。
 - 数据集 config（`configs/_base_/datasets/`）：**全部 19 个**
 - 注册链：`datasets/__init__.py`、`structures/bbox/*`、`evaluation/**/__init__.py`
 

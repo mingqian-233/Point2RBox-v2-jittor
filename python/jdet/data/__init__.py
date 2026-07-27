@@ -16,4 +16,5 @@ from .dior import DIORDataset
 from .hrsc import HRSCDataset
 from .diatom import DIATOMDataset
 from .sku110k import SKU110KDataset
-from .coco_rbox import SARDet100kDataset, SRSDDDataset, RSDDDataset, HRSIDDataset
+from .coco_rbox import (SARDet100kDataset, SAR_Det_Finegrained_Dataset,
+                        SRSDDDataset, RSDDDataset, HRSIDDataset)
