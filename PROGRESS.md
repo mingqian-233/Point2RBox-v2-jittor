@@ -300,3 +300,14 @@
   2.83→2.18，测试已停、待回升；X baseline epoch 9/12 无恙
 - 注意：训练进程载入的是 ba5b766 代码（GN 一遍式、旧 diff_iou）——语义无错不重启，
   stage-2 起自然用新代码
+
+## Day 2 凌晨（00:35-00:50）——实验 X 收官
+
+- **X（PyTorch baseline，同机同数据同 config）12ep 完成，val mAP50 = 54.50**
+  （dota/mAP 0.5447；per-class 表在 expX log 00:43:31 处；强类 plane .881/ship .734、
+  弱类 bridge .191/soccer .132 与论文端到端形态一致）
+- **Jittor 端到端验收线就此确立：val mAP50 ∈ [53.5, 55.5]**（±1.0，同口径 val 评测）
+- X ckpt (epoch_12.pth) 已投官方 pseudo-generator（pid 632205，GPU0 共卡，
+  产物 data/split_ss_dota/point2rbox_v2_pseudo_labels.bbox.json）——
+  作为 M7 伪标签 C4b json diff 的对照物 + 若 Jittor ckpt 有闪失时 stage-2 的备胎输入
+- Jittor v2 epoch 2 完成时 fps 2.97，ETA 明晨 ~10:30
