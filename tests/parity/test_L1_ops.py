@@ -262,6 +262,22 @@ class TestClipGrad:
         opt.zero_grad()
 
 
+class TestResizedCropAA:
+    """torchvision resized_crop 的越界补零与 antialias 语义。"""
+
+    def test_out_of_bounds_crop(self):
+        import jittor as jt
+        from jdet.models.networks.point2rbox_v2 import _resized_crop_aa
+
+        image = jt.arange(9).float32().reshape(1, 1, 3, 3)
+        got = _resized_crop_aa(image, 5, 5, 3, 3).numpy()
+        # torchvision 0.17 functional.resized_crop golden.
+        want = np.array([[[[1.7142857, 2.3333333, 0.0],
+                           [4.3333333, 4.1481481, 0.0],
+                           [0.0, 0.0, 0.0]]]], dtype=np.float32)
+        np.testing.assert_allclose(got, want, rtol=2e-6, atol=2e-6)
+
+
 class TestDiffIoURotated:
     """M7：diff_iou_rotated_2d / RotatedIoULoss vs mmcv golden（GPU）。"""
 

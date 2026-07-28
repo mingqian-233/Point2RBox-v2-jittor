@@ -156,11 +156,12 @@ class P2RV2DOTADataset(CustomDataset):
         return bboxes
 
     def _read_ann_info(self, idx):
-        while True:
-            img_info = self.img_infos[idx]
-            if len(img_info['ann']['bboxes']) > 0:
-                break
-            idx = np.random.choice(np.arange(self.total_len))
+        # Empty samples must stay empty at validation/test time.  mmrotate
+        # keeps them when ``test_mode=True`` even if filter_empty_gt is set;
+        # replacing one with a random non-empty image silently duplicates GT
+        # and corrupts AP.  Training samples have already been filtered in
+        # __init__, so no retry loop is needed there either.
+        img_info = self.img_infos[idx]
         anno = img_info['ann']
 
         img_path = os.path.join(self.images_dir, img_info['filename'])
@@ -198,9 +199,29 @@ class P2RV2DOTADataset(CustomDataset):
 
     def evaluate(self, results, work_dir, epoch, logger=None, save=True):
         """DOTA VOC-style mAP（本地趋势用；最终精度以官方 test 提交为准）。"""
+        # 本 loader/head 严格采用 mmdet/mmrotate 的 0-based labels；JDet 底座
+        # DOTADataset.evaluate 则是历史 1-based 约定（它会给 det_labels +1，
+        # 并以 i+1 筛 GT）。在适配边界复制并平移 GT，不能污染保存的 results，
+        # 也不能把 1-based 语义渗回训练路径。
+        import copy
+        import os
+        import jittor as jt
+        from jdet.utils.general import check_dir
         from jdet.data.dota import DOTADataset
-        return DOTADataset.evaluate(self, results, work_dir, epoch,
-                                    logger=logger, save=save)
+        # Persist the canonical 0-based representation.  Passing save=True to
+        # the legacy evaluator would save the temporary +1 label adapter and
+        # a later offline evaluation would shift it a second time.
+        if save:
+            save_path = os.path.join(work_dir, f'detections/val_{epoch}')
+            check_dir(save_path)
+            jt.save(results, os.path.join(save_path, 'val.pkl'))
+        eval_results = []
+        for result, target in results:
+            target = copy.deepcopy(target)
+            target['labels'] = target['labels'] + 1
+            eval_results.append((result, target))
+        return DOTADataset.evaluate(self, eval_results, work_dir, epoch,
+                                    logger=logger, save=False)
 
 
 from jdet.utils.registry import TRANSFORMS

@@ -233,6 +233,13 @@ class Runner:
 
     @jt.single_process_scope()
     def save(self):
+        model_state = self.model.state_dict()
+        # Point2RBox heads use ``images`` only as a per-step loss cache.  A
+        # Jittor Var assigned to a Module attribute is otherwise mistaken for
+        # persistent model state (and can add a whole image batch to a ckpt).
+        runtime_cache_suffixes = ('.images', '.edges', '.vis')
+        model_state = {k: v for k, v in model_state.items()
+                       if not k.endswith(runtime_cache_suffixes)}
         save_data = {
             "meta":{
                 "jdet_version": jdet.__version__,
@@ -243,7 +250,7 @@ class Runner:
                 "save_time":current_time(),
                 "config": self.cfg.dump()
             },
-            "model":self.model.state_dict(),
+            "model":model_state,
             "scheduler": self.scheduler.parameters(),
             "optimizer": self.optimizer.parameters()
         }
@@ -263,11 +270,23 @@ class Runner:
             self.scheduler.load_parameters(resume_data.get("scheduler",dict()))
             self.optimizer.load_parameters(resume_data.get("optimizer",dict()))
         if ("model" in resume_data):
-            self.model.load_parameters(resume_data["model"])
+            model_state = resume_data["model"]
         elif ("state_dict" in resume_data):
-            self.model.load_parameters(resume_data["state_dict"])
+            model_state = resume_data["state_dict"]
         else:
-            self.model.load_parameters(resume_data)
+            model_state = resume_data
+
+        # Jittor registers a Var assigned to a Module attribute as a parameter.
+        # Point2RBox-v2 temporarily stores the current image batch on its head;
+        # after the graph is released that runtime cache may be serialized as
+        # ``bbox_head.images: None``.  It is not a trainable/model state and
+        # load_parameters rejects None values, so discard such cache entries.
+        if isinstance(model_state, dict):
+            runtime_cache_suffixes = ('.images', '.edges', '.vis')
+            model_state = {k: v for k, v in model_state.items()
+                           if v is not None
+                           and not k.endswith(runtime_cache_suffixes)}
+        self.model.load_parameters(model_state)
 
         self.logger.print_log(f"Loading model parameters from {load_path}")
 

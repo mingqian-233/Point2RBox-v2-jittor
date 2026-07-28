@@ -126,7 +126,8 @@ dataset = dict(
         shuffle=False),
     test=dict(
         type='ImageDataset',
-        dataset_type='DOTA1',
+        # JDet merger registry calls DOTA-v1.0 simply "DOTA".
+        dataset_type='DOTA',
         images_dir='/root/data/split_ss_dota/test/images',
         transforms=[
             dict(type='MMRotateResize', min_size=1024, max_size=1024),

@@ -122,9 +122,11 @@ class DOTADataset(CustomDataset):
         for i,classname in tqdm(enumerate(self.CLASSES),total=len(self.CLASSES)):
             c_dets = dets[dets[:,-1]==(i+1)][:,:-1]
             c_gts = gts[gts[:,-1]==(i+1)][:,:-1]
-            img_idx = gts[:,0].copy()
             classname_gts = {}
-            for idx in np.unique(img_idx):
+            # Include images without any GT.  Detections on those images are
+            # valid false positives; omitting the key makes voc_eval_dota
+            # crash instead of counting them.
+            for idx in range(len(results)):
                 g = c_gts[c_gts[:,0]==idx,:][:,1:]
                 dg = diffcult_polys[idx].copy().reshape(-1,8)
                 diffculty = np.zeros(g.shape[0]+dg.shape[0])

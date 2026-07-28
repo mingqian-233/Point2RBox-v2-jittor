@@ -31,6 +31,47 @@ except ImportError:  # tools/run_net.py 只把 tools/ 放进 sys.path，补仓�
     from third_parties.ted.ted import TED
 
 
+def _aa_bilinear_weights(in_size, out_size):
+    """Weights of torchvision's antialiased bilinear tensor resize."""
+    scale = in_size / out_size
+    support = scale if scale >= 1.0 else 1.0
+    weights = np.zeros((out_size, in_size), dtype=np.float32)
+    for i in range(out_size):
+        center = scale * (i + 0.5)
+        xmin = max(int(center - support + 0.5), 0)
+        xmax = min(int(center + support + 0.5), in_size)
+        js = np.arange(xmin, xmax)
+        row = 1.0 - np.abs((js + 0.5 - center) / scale)
+        row = np.clip(row, 0.0, None)
+        total = row.sum()
+        if total > 0:
+            weights[i, xmin:xmax] = row / total
+    return weights
+
+
+def _resized_crop_aa(images, crop_h, crop_w, out_h, out_w):
+    """Match torchvision resized_crop with an out-of-bounds top-left crop."""
+    batch, channels, height, width = images.shape
+    padded = images
+    if crop_h > height or crop_w > width:
+        canvas = jt.zeros(
+            (batch, channels, max(crop_h, height), max(crop_w, width)),
+            dtype=images.dtype)
+        canvas[:, :, :height, :width] = images
+        padded = canvas
+    padded = padded[:, :, :crop_h, :crop_w]
+    weight_h = jt.array(_aa_bilinear_weights(crop_h, out_h))
+    weight_w = jt.array(_aa_bilinear_weights(crop_w, out_w))
+    flat = padded.reshape(batch * channels, crop_h, crop_w)
+    weight_h = weight_h.unsqueeze(0).expand(
+        (batch * channels, out_h, crop_h))
+    weight_w = weight_w.transpose(1, 0).unsqueeze(0).expand(
+        (batch * channels, crop_w, out_w))
+    flat = jt.matmul(weight_h, flat)
+    flat = jt.matmul(flat, weight_w)
+    return flat.reshape(batch, channels, out_h, out_w)
+
+
 def get_single_pattern(image, bbox, label, square_cls):
     if bbox[2] < 16 or bbox[3] < 16 or bbox[2] > 512 or bbox[3] > 512:
         raise ValueError('pattern size out of range')
@@ -253,11 +294,9 @@ class Point2RBoxV2(nn.Module):
             sca = (float(jt.rand(1).item()) *
                    (self.scale_range[1] - self.scale_range[0]) + self.scale_range[0])
             ss = ('sca', sca)
-            # torchvision resized_crop(0,0,H/sca,W/sca -> H,W)：取左上区域放大
+            # torchvision resized_crop：越界区补零，再 antialias bilinear。
             ch, cw = int(H / sca), int(W / sca)
-            crop = images[:, :, :ch, :cw]
-            images_aug = nn.interpolate(crop, size=(H, W), mode='bilinear',
-                                        align_corners=False)
+            images_aug = _resized_crop_aa(images, ch, cw, H, W)
             targets_aug = copy.deepcopy(targets)
             for target in targets_aug:
                 b = target['rboxes']

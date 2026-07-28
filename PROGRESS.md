@@ -339,3 +339,17 @@
   从 ref 逐字节同步，作为 MMEngine 官方 pipeline/config 基线；JDet 可运行配置仍用
   `configs/point2rbox_v2/` 的展平版本。新增 inventory + byte-parity 测试，与 loader
   smoke 合跑 8 passed。至此铁律三第 2 层的 definitions/configs/registrations 三项闭环。
+# 2026-07-28 — stage-1 精度复盘与 sca 根因
+
+- 双向评测交叉验证完成：Jittor `ckpt_12` 预测在官方 mmrotate
+  evaluator 为 42.6415；官方 PyTorch `epoch_12.pth` 预测在 Jittor
+  evaluator 为 54.4695（官方日志 54.50）。因此差距不在数据划分、结果格式
+  或 evaluator。
+- 修复验证链三个底座问题：空标注 patch 不再随机替换为非空图；legacy DOTA
+  evaluator 为无 GT 图建立空记录；canonical 0-based 结果先保存，仅在 legacy
+  evaluator 边界临时转 1-based，避免离线复评二次偏移。
+- 修复 checkpoint 中 `bbox_head.images/edges/vis` 运行时缓存被当参数保存/恢复。
+- 找到正式训练的确定性错误：25% 的 `sca` 分支把越界 crop 静默截成原图，
+  导致图像不缩小而 GT 乘 `sca`。现改为 torchvision 等价的越界补零 +
+  antialias bilinear；GPU parity rel=6.68e-7，永久 golden 回归已加入。
+- 旧 42.64 checkpoint 仅作失败对照，不打 `v2-stable`。修正版从头重训。

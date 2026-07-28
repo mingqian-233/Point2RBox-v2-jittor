@@ -87,8 +87,27 @@ def test_base_dota_unaffected():
     print('ok base P2RV2DOTADataset regression')
 
 
+def test_empty_sample_is_not_replaced():
+    """Validation keeps an empty patch at its original index."""
+    from jdet.data.p2rv2_dota import P2RV2DOTADataset
+    with tempfile.TemporaryDirectory() as root:
+        images, annfiles = _make_mini_dataset(root, 'plane', 'helicopter')
+        ds = P2RV2DOTADataset(
+            images_dir=images, annfiles_dir=annfiles,
+            weak_supervision=False, diff_thr=1, filter_empty_gt=False,
+            transforms=None, batch_size=1)
+        assert ds.total_len == 2
+        image, ann = ds._read_ann_info(1)
+        assert image.size == (64, 48)
+        assert ann['filename'] == 'img2.png'
+        assert ann['rboxes'].shape == (0, 5)
+        assert ann['labels'].shape == (0,)
+    print('ok empty validation sample preserved')
+
+
 if __name__ == '__main__':
     test_all()
     test_rsar_ext_fallback()
     test_base_dota_unaffected()
+    test_empty_sample_is_not_replaced()
     print('ALL PASS')
