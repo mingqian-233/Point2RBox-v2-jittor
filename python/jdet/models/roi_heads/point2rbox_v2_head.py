@@ -296,7 +296,7 @@ class Point2RBoxV2Head(nn.Module):
             pos_decoded_angle_preds = self.angle_coder.decode(
                 pos_angle_preds, keepdim=True)
             if self.epoch < self.joint_angle_start_epoch:
-                pos_decoded_angle_preds = pos_decoded_angle_preds.stop_grad()
+                pos_decoded_angle_preds = pos_decoded_angle_preds.detach()
             square_mask = jt.zeros_like(pos_labels).bool()
             for c in self.square_cls:
                 square_mask = jt.logical_or(square_mask, pos_labels == c)
@@ -323,7 +323,7 @@ class Point2RBoxV2Head(nn.Module):
                 pos_rbox_targets[:, :2],
                 jt.where(keep.expand((keep.shape[0], 3)),
                          pos_rbox_targets[:, 2:],
-                         pos_rbox_preds[:, 2:].stop_grad())], -1)
+                         pos_rbox_preds[:, 2:].detach())], -1)
             loss_bbox = self.loss_bbox(
                 pos_rbox_preds, pos_rbox_targets, avg_factor=num_pos)
 
@@ -333,7 +333,7 @@ class Point2RBoxV2Head(nn.Module):
                                         pos_decoded_angle_preds), -1)
 
             # Aggregate targets of the same instance based on their identical bid
-            bid_np = pos_bid_targets.stop_grad().numpy().astype(np.float64)
+            bid_np = pos_bid_targets.detach().numpy().astype(np.float64)
             bid_with_view = bid_np[:, 3] + 0.5 * bid_np[:, 2]
             bid, idx = np.unique(bid_with_view, return_inverse=True)
             G = len(bid)
@@ -345,7 +345,7 @@ class Point2RBoxV2Head(nn.Module):
 
             ins_bids = _group_any(bid_np[:, 3], idx, G)
             ins_batch = _group_any(bid_np[:, 0], idx, G)
-            ins_labels_np = _group_any(pos_labels.stop_grad().numpy(), idx, G)
+            ins_labels_np = _group_any(pos_labels.detach().numpy(), idx, G)
             ins_labels = jt.array(ins_labels_np)
 
             ins_gaus_preds = _group_mean(
@@ -581,9 +581,9 @@ class Point2RBoxV2Head(nn.Module):
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(len(cls_scores))]
         mlvl_priors = self.get_points(featmap_sizes)
         for img_id, target in enumerate(targets):
-            cls_score_list = [s[img_id].stop_grad() for s in cls_scores]
-            bbox_pred_list = [b[img_id].stop_grad() for b in bbox_preds]
-            angle_pred_list = [a[img_id].stop_grad() for a in angle_preds]
+            cls_score_list = [s[img_id].detach() for s in cls_scores]
+            bbox_pred_list = [b[img_id].detach() for b in bbox_preds]
+            angle_pred_list = [a[img_id].detach() for a in angle_preds]
             if self.is_training() or self.pseudo_generator:
                 results = self._predict_by_feat_single_pseudo(
                     cls_score_list, bbox_pred_list, angle_pred_list,
@@ -646,7 +646,7 @@ class Point2RBoxV2Head(nn.Module):
                 bboxes[:, :4],
                 jt.where(m, jt.zeros_like(bboxes[:, 4:5]), bboxes[:, 4:5])], -1)
 
-        return dict(bboxes=bboxes.stop_grad(),
+        return dict(bboxes=bboxes.detach(),
                     scores=jt.ones_like(cls_score[:, 0]),
                     labels=gt_labels)
 

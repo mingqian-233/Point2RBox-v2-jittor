@@ -136,8 +136,8 @@ def get_single_pattern(image, bbox, label, square_cls):
 
 
 def get_copy_paste_cache(images, bboxes, labels, square_cls, num_copies):
-    bboxes = bboxes.stop_grad().numpy()
-    labels = labels.stop_grad().numpy()
+    bboxes = bboxes.detach().numpy()
+    labels = labels.detach().numpy()
     patterns = []
     for b, l in zip(bboxes, labels):
         try:
@@ -211,6 +211,18 @@ class Point2RBoxV2(nn.Module):
     def set_epoch(self, epoch):
         self.epoch = epoch
         self.bbox_head.epoch = epoch
+
+    def train(self):
+        """Enter train mode while preserving ResNet ``norm_eval=True``.
+
+        Jittor's base Module.train toggles descendants by DFS and does not
+        dispatch to an overridden child train method.  Explicitly re-enter
+        backbone train mode so its frozen-stage and BN policy is restored.
+        """
+        super(Point2RBoxV2, self).train()
+        self.backbone.train()
+        self.ted_model.eval()
+        return self
 
     def rotate_crop(self, batch_inputs, rot=0., size=(768, 768),
                     targets=None, padding='reflection'):

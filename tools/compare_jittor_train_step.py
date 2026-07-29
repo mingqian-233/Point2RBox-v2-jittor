@@ -1,0 +1,90 @@
+"""Compare one deterministic Jittor train step with official PyTorch dump."""
+import argparse
+import math
+
+import cv2
+import jittor as jt
+import numpy as np
+
+from jdet.config import init_cfg
+from jdet.runner import Runner
+from jdet.data.p2rv2_dota import poly2rbox_le90_np
+
+CLASSES = (
+    'plane', 'baseball-diamond', 'bridge', 'ground-track-field',
+    'small-vehicle', 'large-vehicle', 'ship', 'tennis-court',
+    'basketball-court', 'storage-tank', 'soccer-ball-field', 'roundabout',
+    'harbor', 'swimming-pool', 'helicopter')
+
+
+WATCH = (
+    'backbone.layer2.0.conv1.weight',
+    'backbone.layer3.0.conv1.weight',
+    'backbone.layer4.0.conv1.weight',
+    'neck.lateral_convs.0.conv.weight',
+    'bbox_head.cls_convs.0.conv.weight',
+    'bbox_head.reg_convs.0.conv.weight',
+    'bbox_head.conv_cls.weight',
+    'bbox_head.conv_reg.weight',
+    'bbox_head.conv_angle.weight',
+)
+
+
+def ann(path):
+    polys, labels = [], []
+    with open(path) as f:
+        for line in f:
+            p = line.strip().split()
+            if len(p) >= 9 and p[8] in CLASSES:
+                polys.append([float(x) for x in p[:8]])
+                labels.append(CLASSES.index(p[8]))
+    boxes = poly2rbox_le90_np(np.asarray(polys, np.float32))
+    boxes[:, 2:4], boxes[:, 4] = 1.0, 0.0
+    return boxes, np.asarray(labels, np.int32)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--config', required=True)
+    p.add_argument('--checkpoint', required=True)
+    p.add_argument('--golden', required=True)
+    p.add_argument('--image', required=True)
+    p.add_argument('--ann', required=True)
+    args = p.parse_args()
+    jt.flags.use_cuda = 1
+    init_cfg(args.config)
+    runner = Runner()
+    runner.load(args.checkpoint, model_only=True)
+    model = runner.model
+    model.train()
+    model.set_epoch(1)
+    fixed = 67.5 / 180.0
+    model.ss_prob = [1.0, 0.0, 0.0]
+    model.rotate_range = (fixed, fixed)
+
+    bgr = cv2.imread(args.image)
+    rgb = bgr[:, :, ::-1].copy().transpose(2, 0, 1).astype(np.float32)
+    mean = np.asarray([123.675, 116.28, 103.53], np.float32)[:, None, None]
+    std = np.asarray([58.395, 57.12, 57.375], np.float32)[:, None, None]
+    image = jt.array(((rgb - mean) / std)[None])
+    boxes, labels = ann(args.ann)
+    target = dict(rboxes=jt.array(boxes), labels=jt.array(labels))
+    losses = model(image, [target])
+    total = sum(v.sum() for v in losses.values())
+    named = dict(model.named_parameters())
+    params = [named[k] for k in WATCH]
+    grads = jt.grad(total, params)
+    golden = np.load(args.golden)
+    for k, v in losses.items():
+        got, want = float(v.sum()), float(golden[f'loss__{k}'])
+        print(k, 'J=', got, 'T=', want,
+              'rel=', abs(got - want) / max(abs(want), 1e-12))
+    for name, g in zip(WATCH, grads):
+        got, want = g.numpy(), golden[f'grad__{name}']
+        rel = np.linalg.norm(got - want) / max(np.linalg.norm(want), 1e-12)
+        print(name, 'Jnorm=', np.linalg.norm(got),
+              'Tnorm=', np.linalg.norm(want), 'rel_l2=', rel)
+
+
+if __name__ == '__main__':
+    main()

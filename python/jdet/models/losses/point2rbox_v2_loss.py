@@ -185,7 +185,7 @@ def _get_box_prompt_from_gaussian(mu_j, sigma_j, sigma_scale=1, ellipse_scale_fa
     mu_x, mu_y = mu_j[0], mu_j[1]
     bbox_prompt = jt.stack([mu_x - half_width_bbox, mu_y - half_height_bbox,
                             mu_x + half_width_bbox, mu_y + half_height_bbox],
-                           dim=-1).stop_grad().numpy()
+                           dim=-1).detach().numpy()
     return bbox_prompt.reshape(1, 4)
 
 
@@ -206,7 +206,7 @@ def segment_anything(image, mu, sigma, device=None, sam_checkpoint=None, model_t
     from jdet.models.losses.point2rbox_v2_utils import filter_masks
 
     img_np = (image - image.min()) / (image.max() - image.min()) * 255.0
-    img_np = img_np.permute(1, 2, 0).stop_grad().numpy().astype(np.uint8)
+    img_np = img_np.permute(1, 2, 0).detach().numpy().astype(np.uint8)
 
     H, W = img_np.shape[:2]
     J = len(mu)
@@ -305,7 +305,7 @@ def segment_anything(image, mu, sigma, device=None, sam_checkpoint=None, model_t
             L_diag = diag_embed_2x2(L[j])
             L_target_diag = diag_embed_2x2(L_target)
             instance_loss = gwd_sigma_loss(L_diag.unsqueeze(0),
-                                           L_target_diag.unsqueeze(0).stop_grad(),
+                                           L_target_diag.unsqueeze(0).detach(),
                                            reduction='mean')
             total_loss = total_loss + instance_loss
             valid_instances += 1
@@ -394,9 +394,9 @@ def voronoi_watershed_loss(mu, sigma, label, image, pos_thres=0.994, neg_thres=0
 
     # PyTorch/Jittor 不支持 watershed，用 cv2（CPU、无梯度路径）
     img_uint8 = (image - image.min()) / (image.max() - image.min()) * 255
-    img_uint8 = img_uint8.permute(1, 2, 0).stop_grad().numpy().astype(np.uint8)
+    img_uint8 = img_uint8.permute(1, 2, 0).detach().numpy().astype(np.uint8)
     img_uint8 = cv2.medianBlur(img_uint8, 3)
-    markers = vor.stop_grad().numpy().astype(np.int32)
+    markers = vor.detach().numpy().astype(np.int32)
     markers = jt.array(cv2.watershed(img_uint8, markers))
 
     L, V = eigh_2x2(sigma)
@@ -429,7 +429,7 @@ def voronoi_watershed_loss(mu, sigma, label, image, pos_thres=0.994, neg_thres=0
     L_target = jt.array(L_target_np)
     L = diag_embed_2x2(L)
     L_target = diag_embed_2x2(L_target)
-    loss = gwd_sigma_loss(L, L_target.stop_grad(), reduction='none')
+    loss = gwd_sigma_loss(L, L_target.detach(), reduction='none')
     # torch.topk(largest=False)[0].mean() → 升序排序取前 k
     k = int(np.ceil(loss.shape[0] * topk))
     sort_idx, sorted_loss = jt.argsort(loss)
@@ -567,8 +567,8 @@ class EdgeLoss(nn.Module):
         edge_distribution = jt.exp(-((edge_idx - self.center_idx) ** 2) / (2 * self.sigma ** 2))
         edge_distribution[0] = 0
         edge_distribution[-1] = 0
-        self.edge_idx = edge_idx.stop_grad()
-        self.edge_distribution = edge_distribution.stop_grad()
+        self.edge_idx = edge_idx.detach()
+        self.edge_distribution = edge_distribution.detach()
 
     def execute(self, pred, edge):
         G = self.resolution
@@ -589,7 +589,7 @@ class EdgeLoss(nn.Module):
         rbbox_concat = jt.concat(pred, 0)
 
         return self.loss_weight * _smooth_l1(rbbox_concat[:, 2:4],
-                                             (rbbox_concat[:, 2:4] * exy).stop_grad(),
+                                             (rbbox_concat[:, 2:4] * exy).detach(),
                                              beta=8)
 
 

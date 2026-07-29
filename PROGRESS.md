@@ -353,3 +353,21 @@
   导致图像不缩小而 GT 乘 `sca`。现改为 torchvision 等价的越界补零 +
   antialias bilinear；GPU parity rel=6.68e-7，永久 golden 回归已加入。
 - 旧 42.64 checkpoint 仅作失败对照，不打 `v2-stable`。修正版从头重训。
+## 2026-07-29 — 43.29 mAP 根因：Jittor 父模块 train() 绕过 ResNet norm_eval
+
+- BN/scale 修正版首轮最终 `ckpt_12` val mAP50=43.29（官方 54.50），判定失败并保留作对照。
+- 预测级自监督审查：官方权重分别在 PyTorch/Jittor 上运行同图同增强，rot/flp/sca
+  统计逐项一致，排除增强、前向、解码与 evaluator。
+- 同权重同图同 67.5° 增强的完整训练态对照发现：修复前 Jittor
+  layer2/3/4 梯度分别约为官方 4.2x/7.6x/14.8x。
+- 根因：Jittor `Module.train()` 通过 DFS 直接设置所有后代 `is_train=True`，
+  不调用子模块覆写的 `ResNet.train()`；故官方 `norm_eval=True` 被静默绕过，
+  batch=4（原图+增强图）的所有 BN 一直使用/更新 batch statistics。
+- 修复：`Point2RBoxV2.train()` 在父 DFS 后显式调用 `backbone.train()`；
+  ResNet 的 norm_eval 改为仅设 BN `is_train=False`，避免 Jittor `eval()` 同时
+  stop-grad affine 参数。另将计算图中的残留就地 `stop_grad()` 改为 `detach()`。
+- 修复后同一训练步六项 loss 相对误差 <=3.2e-4；layer2/3/4 梯度范数恢复，
+  GPU 整体相对误差 1.5%-2.2%，head 多数 <0.8%。新增 BN 回归测试。
+- 人工审查图：
+  `work_dirs/ss_debug/geometry.png`、`prediction_consistency.png`、
+  `official_weights_in_jittor.png`。

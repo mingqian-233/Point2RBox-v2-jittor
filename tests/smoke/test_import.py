@@ -21,3 +21,16 @@ def test_jdet_imports():
     from jdet.optims.optimizer import AdamW  # noqa: F401
     from jdet.optims.lr_scheduler import LinearWarmupMultiStepLR  # noqa: F401
     from jdet.runner import Runner  # noqa: F401
+
+
+def test_resnet_norm_eval_keeps_affine_gradients():
+    """Freeze BN statistics without freezing non-frozen affine weights."""
+    from jdet.models.backbones.resnet import Resnet50
+    from jittor import nn
+
+    model = Resnet50(pretrained=False, frozen_stages=1, norm_eval=True)
+    model.train()
+    bns = [m for m in model.modules() if isinstance(m, nn.BatchNorm)]
+    assert bns and all(not m.is_training() for m in bns)
+    assert model.layer1[0].bn1.weight.is_stop_grad()
+    assert not model.layer2[0].bn1.weight.is_stop_grad()

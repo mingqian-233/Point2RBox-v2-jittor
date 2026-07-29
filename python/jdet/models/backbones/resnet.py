@@ -179,9 +179,11 @@ class ResNet(nn.Module):
         self._freeze_stages()
         if self.norm_eval:
             for m in self.modules():
-                # trick: eval have effect on BatchNorm only
+                # Jittor Module.eval() also stop-grads parameters, unlike
+                # torch eval().  norm_eval only changes BN runtime behaviour;
+                # non-frozen affine weights must remain trainable.
                 if isinstance(m, nn.BatchNorm):
-                    m.eval()
+                    m.is_train = False
 
 
 def _resnet(block, layers, **kwargs):
@@ -356,9 +358,9 @@ class ResNet_v1d(nn.Module):
         self._freeze_stages()
         if self.norm_eval:
             for m in self.modules():
-                # trick: eval have effect on BatchNorm only
+                # Keep affine gradients; only freeze running-stat behaviour.
                 if isinstance(m, nn.BatchNorm):
-                    m.eval()
+                    m.is_train = False
 
 def _resnet_v1d(block, layers, **kwargs):
     model = ResNet_v1d(block, layers, **kwargs)
