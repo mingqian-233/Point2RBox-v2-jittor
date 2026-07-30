@@ -318,6 +318,17 @@ class Point2RBoxV2(nn.Module):
                 target['bids'][:, 0] += len(targets)
                 target['bids'][:, 2] = 1
 
+        # Official ordering is intentional: Voronoi supervision images and TED
+        # edges are captured before copy-paste.  Copy-paste only changes the
+        # augmented image subsequently sent through the backbone.
+        supervision_images = jt.concat([images, images_aug], 0)
+        self.bbox_head.images = supervision_images
+        if self.epoch >= self.bbox_head.edge_loss_start_epoch:
+            with jt.no_grad():
+                batch_edges = self.ted_model(
+                    supervision_images * self.preprocess_std + self.preprocess_mean)
+                self.bbox_head.edges = batch_edges[3].clamp(0)
+
         # copy-paste（epoch >= copy_paste_start_epoch 后由上一轮 cache 提供）
         if self.copy_paste_cache and len(targets_aug) == len(self.copy_paste_cache):
             for i in range(len(targets_aug)):
@@ -344,13 +355,6 @@ class Point2RBoxV2(nn.Module):
                 target['bids'] = jt.concat([target['bids'], bids_paste], 0)
 
         images_all = jt.concat([images, images_aug], 0)
-        self.bbox_head.images = images_all
-        # Edge
-        if self.epoch >= self.bbox_head.edge_loss_start_epoch:
-            with jt.no_grad():
-                batch_edges = self.ted_model(
-                    images_all * self.preprocess_std + self.preprocess_mean)
-                self.bbox_head.edges = batch_edges[3].clamp(0)
 
         targets_all = []
         for target in targets + targets_aug:

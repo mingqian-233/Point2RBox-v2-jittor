@@ -387,3 +387,8 @@
 - 修复为按 `loss_ssa.ndim` 给 mask 补 singleton 维。官方真实输入复核：
   flp rel=4.1e-7、sca rel=9.1e-6；ConsistencyLoss 四项 parity 全过，并新增
   `(N,1)` angle 回归测试。此前合成 golden 的 angle 是一维，故未覆盖该坑。
+- 同时发现 epoch7 copy-paste 顺序偏离官方：官方先快照未粘贴增强图供
+  `bbox_head.images`/TED，再 copy-paste 后送 backbone；Jittor 原实现将粘贴图
+  同时用于 Voronoi/Edge 监督。该差异与 ckpt5→ckpt8 mAP 断崖、Voronoi
+  跳高及 Edge 偏低吻合。已恢复官方顺序；Jittor SSA 小测确认 copy-paste
+  后的源张量赋值不会回写先前 concat 快照。
