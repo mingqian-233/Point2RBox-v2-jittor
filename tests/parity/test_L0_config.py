@@ -267,3 +267,6 @@ class TestStage2ConfigParity:
         assert 'pseudo_labels.bbox.json' in g['train_dataloader.dataset.ann_file']
         assert d['train']['weak_supervision'] is False  # 全监督，无 ConvertWeakSupervision
         assert cfg['max_epoch'] == g['train_cfg.max_epochs']
+        from jdet.data.devkits.data_merge import SUPPORTED_MERGE_DATASETS
+        assert d['test']['dataset_type'] == 'DOTA1'
+        assert d['test']['dataset_type'] in SUPPORTED_MERGE_DATASETS

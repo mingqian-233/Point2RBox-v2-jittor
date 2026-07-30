@@ -11,6 +11,9 @@ import numpy as np
 from jdet.data.devkits.dota_to_fair import dota_to_fair, dota_to_fair1m_1_5
 from jdet.utils.general import is_win
 
+SUPPORTED_MERGE_DATASETS = (
+    "FAIR", "DOTA", "DOTA1", "DOTA1_5", "DOTA2", "FAIR1M_1_5")
+
 def flip_box(box, target):
     ans = [box[i] for i in range(8)]
     if not "flip_mode" in target:
@@ -54,7 +57,9 @@ def data_merge(result_pkl, save_path, final_path,dataset_type):
     mergebypoly(save_path,final_path)
 
 def data_merge_result(result_pkl,work_dir,epoch,name,dataset_type,images_dir=""):
-    assert dataset_type in ["FAIR", "DOTA", "DOTA1_5", "DOTA2", "FAIR1M_1_5"], "need to set dataset.test.dataset_type in the config file. FAIR, FAIR1M_1_5, DOTA, DOTA1_5 and DOTA2 are supported"
+    assert dataset_type in SUPPORTED_MERGE_DATASETS, \
+        "need to set dataset.test.dataset_type in the config file. " \
+        f"{', '.join(SUPPORTED_MERGE_DATASETS)} are supported"
     print("Merge results...")
     save_path = os.path.join(work_dir, f"test/submit_{epoch}/before_nms")
     final_path = os.path.join(work_dir, f"test/submit_{epoch}/after_nms")
