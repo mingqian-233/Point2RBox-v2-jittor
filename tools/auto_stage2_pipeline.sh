@@ -99,7 +99,8 @@ export PYTHONUNBUFFERED=1
 if [[ ! -f "$STATE_DIR/stage1.done" ]]; then
     log "waiting for stage-1 pid=$STAGE1_PID to finish naturally"
     while stage1_is_alive; do
-        latest=$(tail -1 "$STAGE1_WORK"/textlog/*.txt 2>/dev/null | tail -1 || true)
+        latest=$(grep -h 'name:point2rbox_v2_1x_dota' \
+            "$STAGE1_WORK"/textlog/*.txt 2>/dev/null | tail -1 || true)
         log "stage-1 alive; ${latest:-no log line yet}"
         sleep 60
     done
