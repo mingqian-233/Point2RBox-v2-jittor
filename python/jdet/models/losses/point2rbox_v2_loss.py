@@ -632,6 +632,14 @@ class Point2RBoxV2ConsistencyLoss(nn.Module):
         loss_ssa = _smooth_l1(d_ang, jt.zeros_like(d_ang), beta=0.1, reduction='none')
         # loss_ssa[~square_mask].sum() / max(1, (~square_mask).sum()) → out-of-place
         keep = (jt.logical_not(square_mask)).float()
+        # Official boolean indexing selects rows from loss_ssa.  In the real
+        # head d_ang is (N, 1), while square_mask is (N,).  Multiplying those
+        # shapes directly broadcasts to (N, N) and overweights the angle loss
+        # by roughly the number of valid pairs.  Give the mask an explicit
+        # singleton angle dimension to preserve row-selection semantics.
+        if keep.ndim < loss_ssa.ndim:
+            keep = keep.reshape(
+                (keep.shape[0],) + (1,) * (loss_ssa.ndim - keep.ndim))
         loss_ssa = (loss_ssa * keep).sum() / jt.maximum(keep.sum(), jt.float32(1.0))
 
         return self.loss_weight * (loss_ssg + loss_ssa)

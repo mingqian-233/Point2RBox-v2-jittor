@@ -371,3 +371,19 @@
 - 人工审查图：
   `work_dirs/ss_debug/geometry.png`、`prediction_consistency.png`、
   `official_weights_in_jittor.png`。
+
+## 2026-07-30 — loss_ss 长期放大根因：列向量与一维 mask 外积广播
+
+- norm_eval 修正版最终 `ckpt_12` patch-val mAP50=33.09；同协议 `ckpt_5`
+  为 36.50，官方 PyTorch epoch5 权重经 Jittor evaluator 为 42.65，仍未达标。
+- 逐 epoch 曲线显示 Jittor `loss_ss` 从 epoch1 起是官方的 3–9 倍，且早于
+  Edge/TED 启用和 LR milestone，随后 bbox/voronoi 一并退化。
+- 确定性 epoch5 单步把 rot/flp/sca 分开后，flp/sca 的 cls/bbox/voronoi
+  基本对齐，但 `loss_ss` 分别高 82.7%/64.2%；用官方捕获的完全相同输入
+  复算仍重现，证明问题位于 ConsistencyLoss 内部。
+- 根因：真实 head 输出的 `loss_ssa` 是 `(N,1)`，`square_mask` 是 `(N,)`；
+  Jittor 的乘法 reduction 将二者广播成 `(N,N)`，而官方布尔索引是按行筛选。
+  N=4 实例中 flp/sca angle 项均被精确放大 4 倍。
+- 修复为按 `loss_ssa.ndim` 给 mask 补 singleton 维。官方真实输入复核：
+  flp rel=4.1e-7、sca rel=9.1e-6；ConsistencyLoss 四项 parity 全过，并新增
+  `(N,1)` angle 回归测试。此前合成 golden 的 angle 是一维，故未覆盖该坑。

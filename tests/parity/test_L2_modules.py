@@ -216,6 +216,26 @@ class TestConsistencyLoss:
     def test_sca(self):
         self._run('sca', 1.3)
 
+    def test_column_angle_does_not_broadcast_mask(self):
+        """Head 的真实 angle shape 是 (N,1)，mask 是 (N,)。
+
+        两者直接相乘会错误广播成 (N,N)，此前导致 loss_ssa 被放大 N 倍。
+        """
+        import jittor as jt
+        from jdet.models.losses.point2rbox_v2_loss import Point2RBoxV2ConsistencyLoss
+
+        g = np.load(os.path.join(GOLDEN, 'p2rv2_loss.npz'))
+        loss_fn = Point2RBoxV2ConsistencyLoss(loss_weight=1.0)
+        go = jt.array(g['con_gaus_o'])
+        gt_ = jt.array(g['con_gaus_t'])
+        ao = jt.array(g['con_ang_o']).reshape(-1, 1)
+        at = jt.array(g['con_ang_t']).reshape(-1, 1)
+        loss = loss_fn(
+            (go, ao), (gt_, at), jt.array(g['con_sq']), 'flp', 0.0)
+        want = float(g['con_flp_loss'])
+        rel = abs(float(loss.item()) - want) / abs(want)
+        assert rel < 1e-4, f'column-angle forward rel err = {rel}'
+
 
 class TestTED:
     """third_parties/ted 移植：加载转换权重后 4 个输出与 torch 版逐位对齐。"""

@@ -50,6 +50,9 @@ def main():
     p.add_argument('--golden', required=True)
     p.add_argument('--image', required=True)
     p.add_argument('--ann', required=True)
+    p.add_argument('--ss-mode', choices=('rot', 'flp', 'sca'), default='rot')
+    p.add_argument('--ss-value', type=float, default=None,
+                   help='Rotation in degrees or scale factor; defaults to 67.5/1.25.')
     args = p.parse_args()
     jt.flags.use_cuda = 1
     init_cfg(args.config)
@@ -58,9 +61,16 @@ def main():
     model = runner.model
     model.train()
     model.set_epoch(1)
-    fixed = 67.5 / 180.0
-    model.ss_prob = [1.0, 0.0, 0.0]
-    model.rotate_range = (fixed, fixed)
+    if args.ss_mode == 'rot':
+        fixed = (67.5 if args.ss_value is None else args.ss_value) / 180.0
+        model.ss_prob = [1.0, 0.0, 0.0]
+        model.rotate_range = (fixed, fixed)
+    elif args.ss_mode == 'flp':
+        model.ss_prob = [0.0, 1.0, 0.0]
+    else:
+        fixed = 1.25 if args.ss_value is None else args.ss_value
+        model.ss_prob = [0.0, 0.0, 1.0]
+        model.scale_range = (fixed, fixed)
 
     bgr = cv2.imread(args.image)
     rgb = bgr[:, :, ::-1].copy().transpose(2, 0, 1).astype(np.float32)
@@ -75,6 +85,17 @@ def main():
     params = [named[k] for k in WATCH]
     grads = jt.grad(total, params)
     golden = np.load(args.golden)
+    if 'con_go' in golden:
+        from jdet.models.losses.point2rbox_v2_loss import Point2RBoxV2ConsistencyLoss
+        raw_loss = Point2RBoxV2ConsistencyLoss(loss_weight=1.0)(
+            (jt.array(golden['con_go']), jt.array(golden['con_ao'])),
+            (jt.array(golden['con_gt']), jt.array(golden['con_at'])),
+            jt.array(golden['con_sq']),
+            str(golden['con_aug_type']),
+            float(golden['con_aug_val']))
+        want = float(golden['loss__loss_ss'])
+        print('loss_ss_on_exact_torch_inputs J=', float(raw_loss),
+              'T=', want, 'rel=', abs(float(raw_loss) - want) / max(abs(want), 1e-12))
     for k, v in losses.items():
         got, want = float(v.sum()), float(golden[f'loss__{k}'])
         print(k, 'J=', got, 'T=', want,
