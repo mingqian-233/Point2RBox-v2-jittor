@@ -29,7 +29,9 @@ if ! flock -n 9; then
     echo "another auto_stage2_pipeline instance is already running" >&2
     exit 2
 fi
-exec > >(tee -a "$LOG") 2>&1
+# Do not let the logger child inherit fd 9; otherwise an interrupted parent
+# leaves an orphaned tee process holding the singleton lock.
+exec > >(tee -a "$LOG" 9>&-) 2>&1
 
 log() { printf '[%s] %s\n' "$(date -u '+%F %T UTC')" "$*"; }
 fail() { log "FATAL: $*"; exit 1; }
