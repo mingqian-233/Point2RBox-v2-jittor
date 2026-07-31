@@ -392,3 +392,18 @@
   同时用于 Voronoi/Edge 监督。该差异与 ckpt5→ckpt8 mAP 断崖、Voronoi
   跳高及 Edge 偏低吻合。已恢复官方顺序；Jittor SSA 小测确认 copy-paste
   后的源张量赋值不会回写先前 concat 快照。
+
+## 2026-07-31 — stage-1/stage-2 自动流水线完成
+
+- 最终修正版 stage-1：ckpt5 patch-val mAP50=43.32（官方 epoch5 经同
+  evaluator=42.65），但 ckpt12 最终回落到 40.57，说明后期退化仍未完全解决。
+- 按用户明确要求不设 mAP 阈值，流水线继续生成最终伪标签：
+  12,800 图 / 245,953 框，schema 与数量校验通过。
+- stage-2 Rotated FCOS 完成 12 epoch，patch-val mAP50=51.91；自动 test、
+  patch merge 和 DOTA zip 均完成。
+- 最终提交包：
+  `/root/work/A/DOTA_SUBMISSIONS/point2rbox_v2_stage1_e2e.zip`
+  （SHA256 `3fd2bd99c2dbe4b42ad338400727ed55c091ddb4e263073d653e615db4342a94`）
+  和 `point2rbox_v2_stage2_pseudo_fcos.zip`
+  （SHA256 `981adebae4016374911efa807ce53a52f35c96dddb120b677bfc8307a01e1c97`）。
+  两包均含 15 个类别 txt，`unzip -t` 无错误。
