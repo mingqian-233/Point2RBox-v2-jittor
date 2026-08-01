@@ -39,13 +39,16 @@ def main():
     p.add_argument('--ss-mode', choices=('rot', 'flp', 'sca'), default='rot')
     p.add_argument('--ss-value', type=float, default=None,
                    help='Rotation in degrees or scale factor; defaults to 67.5/1.25.')
+    p.add_argument('--epoch', type=int, default=1)
+    p.add_argument('--fixed-copy-paste', action='store_true')
+    p.add_argument('--dump-generated-cache', action='store_true')
     args = p.parse_args()
 
     init_default_scope('mmrotate')
     model = MODELS.build(Config.fromfile(args.config).model).cuda()
     load_checkpoint(model, args.checkpoint, map_location='cpu')
     model.train()
-    model.set_epoch(1)
+    model.set_epoch(args.epoch)
     if args.ss_mode == 'rot':
         fixed = (67.5 if args.ss_value is None else args.ss_value) / 180.0
         model.ss_prob = [1.0, 0.0, 0.0]
@@ -71,7 +74,22 @@ def main():
     ds.gt_instances = InstanceData(
         bboxes=RotatedBoxes(torch.from_numpy(boxes).cuda()),
         labels=torch.from_numpy(labels).cuda())
+    if args.fixed_copy_paste:
+        # A framework-independent RGBA patch.  Keeping this synthetic removes
+        # random pattern generation from the copy-paste application test.
+        yy, xx = np.mgrid[:20, :24].astype(np.float32)
+        pattern = np.stack((
+            (xx - 12.0) / 12.0,
+            (yy - 10.0) / 10.0,
+            (xx + yy - 22.0) / 22.0,
+            np.full_like(xx, 0.75)), axis=0).astype(np.float32)
+        patch_box = np.asarray([12.0, 10.0, 16.0, 8.0, 0.2], np.float32)
+        model.copy_paste_cache = [[(
+            torch.from_numpy(pattern).cuda(), patch_box.copy(), 4)]]
+        np.random.seed(314159)
 
+    # NumPy drives pattern geometry and paste offsets in the official code.
+    np.random.seed(314159)
     consistency_inputs = {}
     def _capture_consistency(_module, inputs):
         (go, ao), (gt, at), sq, aug_type, aug_val = inputs
@@ -92,6 +110,13 @@ def main():
     out = {f'loss__{k}': np.float64(v.sum().detach().cpu())
            for k, v in losses.items()}
     out.update(consistency_inputs)
+    if args.dump_generated_cache:
+        patterns = model.copy_paste_cache[0]
+        out['cp_count'] = np.int32(len(patterns))
+        for i, (chip, bbox, label) in enumerate(patterns):
+            out[f'cp_chip__{i}'] = chip.detach().cpu().numpy()
+            out[f'cp_bbox__{i}'] = np.asarray(bbox)
+            out[f'cp_label__{i}'] = np.int32(label)
     for name in WATCH:
         g = named[name].grad
         out[f'grad__{name}'] = g.detach().cpu().numpy()

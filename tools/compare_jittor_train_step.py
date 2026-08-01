@@ -53,6 +53,9 @@ def main():
     p.add_argument('--ss-mode', choices=('rot', 'flp', 'sca'), default='rot')
     p.add_argument('--ss-value', type=float, default=None,
                    help='Rotation in degrees or scale factor; defaults to 67.5/1.25.')
+    p.add_argument('--epoch', type=int, default=1)
+    p.add_argument('--fixed-copy-paste', action='store_true')
+    p.add_argument('--compare-generated-cache', action='store_true')
     args = p.parse_args()
     jt.flags.use_cuda = 1
     init_cfg(args.config)
@@ -60,7 +63,7 @@ def main():
     runner.load(args.checkpoint, model_only=True)
     model = runner.model
     model.train()
-    model.set_epoch(1)
+    model.set_epoch(args.epoch)
     if args.ss_mode == 'rot':
         fixed = (67.5 if args.ss_value is None else args.ss_value) / 180.0
         model.ss_prob = [1.0, 0.0, 0.0]
@@ -79,12 +82,39 @@ def main():
     image = jt.array(((rgb - mean) / std)[None])
     boxes, labels = ann(args.ann)
     target = dict(rboxes=jt.array(boxes), labels=jt.array(labels))
+    if args.fixed_copy_paste:
+        yy, xx = np.mgrid[:20, :24].astype(np.float32)
+        pattern = np.stack((
+            (xx - 12.0) / 12.0,
+            (yy - 10.0) / 10.0,
+            (xx + yy - 22.0) / 22.0,
+            np.full_like(xx, 0.75)), axis=0).astype(np.float32)
+        patch_box = np.asarray([12.0, 10.0, 16.0, 8.0, 0.2], np.float32)
+        model.copy_paste_cache = [[(jt.array(pattern), patch_box.copy(), 4)]]
+        np.random.seed(314159)
+    np.random.seed(314159)
     losses = model(image, [target])
     total = sum(v.sum() for v in losses.values())
     named = dict(model.named_parameters())
     params = [named[k] for k in WATCH]
     grads = jt.grad(total, params)
     golden = np.load(args.golden)
+    if args.compare_generated_cache:
+        patterns = model.copy_paste_cache[0]
+        print('copy_paste_count J=', len(patterns),
+              'T=', int(golden['cp_count']))
+        for i, (chip, bbox, label) in enumerate(patterns):
+            want_chip = golden[f'cp_chip__{i}']
+            got_chip = chip.numpy()
+            rgb_rel = np.linalg.norm(got_chip[:3] - want_chip[:3]) / max(
+                np.linalg.norm(want_chip[:3]), 1e-12)
+            print('copy_paste', i, 'shape J/T=', got_chip.shape,
+                  want_chip.shape, 'label J/T=', label,
+                  int(golden[f'cp_label__{i}']),
+                  'bbox J=', bbox, 'T=', golden[f'cp_bbox__{i}'],
+                  'rgb_rel=', rgb_rel,
+                  'alpha_mean J/T=', got_chip[3].mean(),
+                  want_chip[3].mean())
     if 'con_go' in golden:
         from jdet.models.losses.point2rbox_v2_loss import Point2RBoxV2ConsistencyLoss
         raw_loss = Point2RBoxV2ConsistencyLoss(loss_weight=1.0)(

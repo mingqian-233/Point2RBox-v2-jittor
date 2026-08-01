@@ -407,3 +407,58 @@
   和 `point2rbox_v2_stage2_pseudo_fcos.zip`
   （SHA256 `981adebae4016374911efa807ce53a52f35c96dddb120b677bfc8307a01e1c97`）。
   两包均含 15 个类别 txt，`unzip -t` 无错误。
+## 2026-07-31 — v2 epoch-7 regression investigation
+
+- The corrected run is healthy through checkpoint 5: Jittor patch AP50
+  43.3216 versus official PyTorch 42.6512 under the same evaluator.  The
+  final checkpoint falls to 40.5666 versus official 54.50, so the regression
+  starts in the late-training branch (copy-paste and edge loss start at
+  zero-based epoch 6 / displayed epoch 7).
+- A deterministic epoch-7 cross-framework step using the same checkpoint,
+  image, flip, synthetic RGBA patch, paste offset and target is numerically
+  aligned.  All six losses have relative error <= 6.5e-4; watched gradient
+  relative L2 errors are <= 1.65e-2.
+- Real cache generation is also aligned: 6/6 patterns have identical labels
+  and output shapes, RGB relative error <= 2.5e-3, and transformed boxes
+  differ by about 1e-4.  This rules out the copy-paste formulas, target
+  append, TED/supervision ordering, and head loss implementation.
+- Remaining framework-specific difference found: PyTorch materializes each
+  pattern eagerly, while Jittor retained a lazy graph rooted at the current
+  dataloader image and evaluated it during the next iteration.  The Jittor
+  cache now explicitly detaches and synchronizes the pattern at creation.
+  A one-epoch replay from checkpoint 6 plus checkpoint-6/7 full validation is
+  the deciding experiment; it is running automatically.
+- Full checkpoint boundary validation confirms an abrupt epoch-7 collapse:
+  ckpt5 43.3216 -> ckpt6 44.0580 -> ckpt7 35.3519 mAP50.  The largest
+  one-epoch class drops are tennis-court 90.42 -> 13.16,
+  baseball-diamond 48.86 -> 25.56, and basketball-court 24.80 -> 3.45.
+  This rules out a gradual pre-epoch-7 optimizer drift and localizes the
+  failure to the newly enabled edge/copy-paste training branch.
+- One-epoch ablations from the identical ckpt6 optimizer state give:
+  original 35.3519, eager-materialized copy-paste cache 36.3306, and
+  copy-paste disabled (EdgeLoss retained) 33.6217 mAP50.  Therefore cache
+  laziness is only a secondary ~+0.98 point effect and copy-paste is not the
+  primary collapse source.  The evidence now points to the concurrently
+  enabled EdgeLoss path; a final copy-paste-on/EdgeLoss-off replay is running.
+- Final ablation: retaining copy-paste but disabling EdgeLoss yields 51.1636
+  mAP50 after the same single epoch, versus 35.3519 with EdgeLoss enabled
+  (+15.8117).  This directly identifies the Jittor EdgeLoss training path as
+  the primary epoch-7 collapse source.  Eager cache remains a small secondary
+  improvement only.  The diagnostic test tail was stopped after validation.
+- Concrete root cause found: `edge_idx` and `edge_distribution` are official
+  torch buffers.  A blanket stop_grad->detach cleanup converted them into
+  trainable Jittor Module Vars, so AdamW decayed them for all 38,400 warm-up
+  steps before EdgeLoss was enabled.  In v2 ckpt6 both are 0.9087x their
+  intended values; `center_idx` remains 15, creating a systematic box-shrink
+  target.  The successful v3 training commit still used stop_grad and its
+  ckpt6 buffers are exactly 1.0000x, explaining why v3 did not collapse.
+  Fixed by restoring stop_grad and excluding these deterministic constants
+  from checkpoint save/load (old corrupt checkpoints reconstruct them).
+  EdgeLoss golden and AdamW-freeze regression tests pass.  A fixed-buffer
+  epoch7 replay from the original ckpt6 is running for final mAP confirmation.
+- Fixed-buffer epoch7 replay completed at 47.1017 mAP50: +11.7498 over the
+  corrupt original, confirming the decay bug is the dominant cause.  It is
+  still 4.0619 below the no-EdgeLoss ablation (51.1636), so an official
+  PyTorch epoch7 checkpoint has been converted and is being evaluated through
+  the identical Jittor evaluator to determine whether that residual is the
+  expected one-epoch EdgeLoss cost or another porting discrepancy.

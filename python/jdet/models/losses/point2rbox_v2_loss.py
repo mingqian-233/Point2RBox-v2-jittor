@@ -567,8 +567,14 @@ class EdgeLoss(nn.Module):
         edge_distribution = jt.exp(-((edge_idx - self.center_idx) ** 2) / (2 * self.sigma ** 2))
         edge_distribution[0] = 0
         edge_distribution[-1] = 0
-        self.edge_idx = edge_idx.detach()
-        self.edge_distribution = edge_distribution.detach()
+        # These are torch ``register_buffer`` constants, not graph detach
+        # sites.  Jittor exposes every Var attached to a Module through
+        # ``parameters()``; detach() alone therefore lets AdamW weight decay
+        # them from iteration 0.  After 38,400 steps both constants had fallen
+        # to 0.9087x while ``center_idx`` stayed fixed, causing EdgeLoss to
+        # shrink predicted boxes catastrophically when enabled at epoch 7.
+        self.edge_idx = edge_idx.stop_grad()
+        self.edge_distribution = edge_distribution.stop_grad()
 
     def execute(self, pred, edge):
         G = self.resolution
