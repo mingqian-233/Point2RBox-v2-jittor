@@ -6,17 +6,61 @@ import jittor as jt
 
 class Optimizer(object):
     def parameters(self):
+        """Serializable optimizer state, excluding live model references.
+
+        Jittor Adam/AdamW keep first/second moments inside each param_group
+        (``m``/``values``).  The old implementation dropped param_groups
+        entirely, so every resumed run silently restarted the optimizer.
+        """
         data = {}
         for k, d in self.__dict__.items():
-            if k == "param_groups":
+            if k in ("param_groups", "_grad_map"):
                 continue
             data[k] = d
+        data["param_groups"] = []
+        for group in self.param_groups:
+            # params point at the live model and grads are per-step scratch.
+            state = {k: v for k, v in group.items()
+                     if k not in ("params", "grads")}
+            # jt.save recursively replaces Vars nested in lists with NumPy
+            # arrays in-place.  Snapshot moment lists first so checkpointing
+            # cannot corrupt the live optimizer that continues training.
+            for state_key in ("m", "values"):
+                if state_key in state:
+                    state[state_key] = [v.numpy().copy()
+                                        for v in state[state_key]]
+            data["param_groups"].append(state)
         return data
 
     def load_parameters(self, data):
         if isinstance(data, dict):
             for k, d in data.items():
-                if k in self.__dict__:
+                if k == "param_groups":
+                    if len(d) != len(self.param_groups):
+                        raise ValueError(
+                            f'optimizer group count mismatch: '
+                            f'{len(d)} vs {len(self.param_groups)}')
+                    for saved, current in zip(d, self.param_groups):
+                        for state_key, state_value in saved.items():
+                            if state_key in ("params", "grads"):
+                                continue
+                            if state_key in ("m", "values"):
+                                if len(state_value) != len(current["params"]):
+                                    raise ValueError(
+                                        f'optimizer {state_key} length mismatch: '
+                                        f'{len(state_value)} vs '
+                                        f'{len(current["params"])}')
+                                # Preserve the state Vars allocated by the
+                                # optimizer and copy checkpoint values into
+                                # them, keeping dependencies/device correct.
+                                for dst, src in zip(current[state_key],
+                                                    state_value):
+                                    if not isinstance(src, jt.Var):
+                                        src = jt.array(src)
+                                    dst.update(src)
+                            else:
+                                current[state_key] = state_value
+                elif k in self.__dict__:
                     self.__dict__[k] = d
 
     def cur_lr(self):

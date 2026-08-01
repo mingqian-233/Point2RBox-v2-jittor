@@ -462,3 +462,15 @@
   PyTorch epoch7 checkpoint has been converted and is being evaluated through
   the identical Jittor evaluator to determine whether that residual is the
   expected one-epoch EdgeLoss cost or another porting discrepancy.
+- Official PyTorch epoch7 through the same evaluator is 48.0831, only 0.9814
+  above the repaired Jittor replay; the no-EdgeLoss 51.1636 score is an
+  expected temporary gain from removing the official regularizer.
+- The ckpt6->12 continuation finished at 50.2149 and produced a valid test
+  merge zip, but auditing exposed a second core checkpoint bug: JDet's custom
+  optimizer serializer dropped `param_groups`, which is where Jittor AdamW
+  stores `m` and `values`.  Resume therefore reset all moments.  This run is
+  diagnostic, not the final accuracy result.  Serialization now snapshots
+  moments without mutating the live optimizer and restores them into the
+  allocated state Vars.  A strict uninterrupted-vs-resumed update regression
+  passes.  A final run is starting from iter0 because old checkpoints cannot
+  reconstruct moments that were never saved.
