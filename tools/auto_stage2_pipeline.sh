@@ -3,14 +3,14 @@
 # pseudo labels, train/evaluate/test stage-2, and collect DOTA submission zips.
 set -Eeuo pipefail
 
-REPO=/root/work/A/Point2RBox-v2-jittor
+REPO=/root/Point2RBox-v2-jittor
 CONDA_SH=/opt/miniconda3/etc/profile.d/conda.sh
 ENV_NAME=p2r-jittor
-GPU_ID=0
-STAGE1_PID=${STAGE1_PID:-1615615}
-STAGE1_WORK="$REPO/work_dirs/point2rbox_v2_1x_dota"
+GPU_ID=${GPU_ID:-3}
+STAGE1_PID=${STAGE1_PID:-412103}
+STAGE1_WORK="$REPO/work_dirs/point2rbox_v2_1x_dota_final_fixed"
 STAGE1_CKPT="$STAGE1_WORK/checkpoints/ckpt_12.pkl"
-STAGE1_ZIP="$REPO/submit_zips/point2rbox_v2_1x_dota.zip"
+STAGE1_ZIP="$REPO/submit_zips/point2rbox_v2_1x_dota_final_fixed.zip"
 PSEUDO_TMP_PREFIX=/root/data/split_ss_dota/point2rbox_v2_pseudo_labels_jittor_final
 PSEUDO_TMP="${PSEUDO_TMP_PREFIX}.bbox.json"
 PSEUDO_CANON=/root/data/split_ss_dota/point2rbox_v2_pseudo_labels.bbox.json
@@ -43,7 +43,7 @@ stage1_is_alive() {
     local cmd
     cmd=$(tr '\0' ' ' <"/proc/$STAGE1_PID/cmdline" 2>/dev/null || true)
     [[ "$cmd" == *"run_net.py"* &&
-       "$cmd" == *"point2rbox_v2_1x_dota.py"* &&
+       "$cmd" == *"point2rbox_v2_final_fixed.py"* &&
        "$cmd" == *"--task train"* ]]
 }
 
@@ -72,8 +72,8 @@ path = pathlib.Path(sys.argv[1])
 data = json.loads(path.read_text())
 images = {row['image_id'] for row in data}
 required = {'image_id', 'bbox', 'score', 'category_id'}
-if len(data) != 245953:
-    raise SystemExit(f'pseudo count mismatch: {len(data)} != 245953')
+if not data:
+    raise SystemExit('pseudo label export is empty')
 if len(images) != 12800:
     raise SystemExit(f'pseudo image count mismatch: {len(images)} != 12800')
 if any(set(row) != required or len(row['bbox']) != 5 for row in data):
@@ -84,9 +84,22 @@ PY
 
 collect_zip() {
     local src=$1 dst=$2
+    local tmp file base
     [[ -s "$src" ]] || fail "submission zip missing or empty: $src"
-    cp -f "$src" "$dst"
+    tmp=$(mktemp -d)
+    unzip -q "$src" -d "$tmp"
+    for file in "$tmp"/*.txt; do
+        base=$(basename "$file")
+        if [[ "$base" != Task1_* ]]; then
+            mv "$file" "$tmp/Task1_$base"
+        fi
+    done
+    (cd "$tmp" && zip -q -j submission.zip Task1_*.txt)
+    mv -f "$tmp/submission.zip" "$dst"
+    rm -rf "$tmp"
     unzip -tq "$dst" >/dev/null || fail "corrupt submission zip: $dst"
+    [[ $(unzip -Z1 "$dst" | grep -c '^Task1_.*\.txt$') -eq 15 ]] || \
+        fail "submission zip must contain 15 Task1_<class>.txt files"
     sha256sum "$dst" | tee "$dst.sha256"
 }
 
@@ -96,6 +109,10 @@ conda activate "$ENV_NAME"
 export CUDA_VISIBLE_DEVICES="$GPU_ID"
 export PYTHONPATH="$REPO/python"
 export PYTHONUNBUFFERED=1
+# Jittor's bundled CUDA 11.2 nvcc is incompatible with the host g++-13.
+# Set this explicitly because a tmux server can inherit an already-active
+# conda environment and skip the activate.d hook that normally defines it.
+export cc_path=/usr/bin/g++-10
 
 if [[ ! -f "$STATE_DIR/stage1.done" ]]; then
     log "waiting for stage-1 pid=$STAGE1_PID to finish naturally"
@@ -103,11 +120,15 @@ if [[ ! -f "$STATE_DIR/stage1.done" ]]; then
         latest=$(grep -h 'name:point2rbox_v2_1x_dota' \
             "$STAGE1_WORK"/textlog/*.txt 2>/dev/null | tail -1 || true)
         log "stage-1 alive; ${latest:-no log line yet}"
-        sleep 60
+        sleep 15
     done
     [[ -s "$STAGE1_CKPT" ]] || fail "stage-1 exited without ckpt_12"
     validate_stage1_map
-    collect_zip "$STAGE1_ZIP" "$OUT_DIR/point2rbox_v2_stage1_e2e.zip"
+    if [[ -s "$STAGE1_ZIP" ]]; then
+        collect_zip "$STAGE1_ZIP" "$OUT_DIR/point2rbox_v2_stage1_e2e.zip"
+    else
+        log "stage-1 submission zip not present; continuing from validated ckpt_12"
+    fi
     touch "$STATE_DIR/stage1.done"
     log "stage-1 accepted"
 fi

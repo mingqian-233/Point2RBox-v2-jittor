@@ -232,7 +232,14 @@ def mergesingle(dstpath, nms, fullname):
 
             pattern2 = re.compile(r'__([\d+\.]+)__\d+___')
 
-            rate = re.findall(pattern2, subname)[0]
+            rate = float(re.findall(pattern2, subname)[0])
+            # The recovered DOTA split uses ``name__1024__x___y`` where the
+            # middle field is the tile size, not an image scaling ratio.  The
+            # upstream merger expects names such as ``name__1.0__x___y`` and
+            # would otherwise divide every coordinate by 1024, producing a
+            # syntactically valid submission whose AP is exactly zero.
+            if rate > 16:
+                rate = 1.0
 
             confidence = splitline[1]
             poly = list(map(float, splitline[2:]))

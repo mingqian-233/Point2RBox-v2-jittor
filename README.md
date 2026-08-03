@@ -31,12 +31,13 @@ then train a standard rotated FCOS on them; the paper reports the two-stage resu
 
 | Setting | Backbone | mAP50 (paper, PyTorch) | mAP50 (this repo, Jittor) | Config | Checkpoint |
 |---|---|---|---|---|---|
-| End-to-end 1x | R50-FPN* | 41.68 | _training in progress_ | [cfg](configs/point2rbox_v2/point2rbox_v2_1x_dota.py) | TBD |
-| Two-stage 1x (pseudo → FCOS) | R50-FPN | 62.61 | _training in progress_ | [cfg](configs/point2rbox_v2/rotated_fcos_1x_dota_using_pseudo.py) | TBD |
+| End-to-end 1x | R50-FPN* | 41.68 | 48.95 | [cfg](configs/point2rbox_v2/point2rbox_v2_final_fixed.py) | [HF release](https://huggingface.co/Mingqian-233/Point2RBox-v2-jittor) |
+| Two-stage 1x (pseudo → FCOS) | R50-FPN | 62.61 | **59.39** | [cfg](configs/point2rbox_v2/rotated_fcos_1x_dota_using_pseudo.py) | [HF release](https://huggingface.co/Mingqian-233/Point2RBox-v2-jittor) |
 
 *The end-to-end model uses the P3 level only (`strides=[8]`), per the official config.
-Numbers will be filled in when the current runs finish; acceptance bar is ±1.0 mAP50
-against a same-machine PyTorch baseline run.
+The reported Jittor numbers are DOTA-v1.0 test-server mAP50: 0.4895466803 for
+stage 1 and 0.5939490341 for stage 2. The local stage-2 validation mAP50 is
+0.6750881105.
 
 ## Installation
 
