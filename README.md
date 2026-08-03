@@ -31,7 +31,7 @@ then train a standard rotated FCOS on them; the paper reports the two-stage resu
 
 | Setting | Backbone | mAP50 (paper, PyTorch) | mAP50 (this repo, Jittor) | Config | Checkpoint |
 |---|---|---|---|---|---|
-| End-to-end 1x | R50-FPN* | 41.68 | 48.95 | [cfg](configs/point2rbox_v2/point2rbox_v2_final_fixed.py) | [HF release](https://huggingface.co/Mingqian-233/Point2RBox-v2-jittor) |
+| End-to-end 1x | R50-FPN* | 51.00 | 48.95 | [cfg](configs/point2rbox_v2/point2rbox_v2_final_fixed.py) | [HF release](https://huggingface.co/Mingqian-233/Point2RBox-v2-jittor) |
 | Two-stage 1x (pseudo → FCOS) | R50-FPN | 62.61 | **59.39** | [cfg](configs/point2rbox_v2/rotated_fcos_1x_dota_using_pseudo.py) | [HF release](https://huggingface.co/Mingqian-233/Point2RBox-v2-jittor) |
 
 *The end-to-end model uses the P3 level only (`strides=[8]`), per the official config.
