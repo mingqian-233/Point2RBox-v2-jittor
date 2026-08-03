@@ -149,10 +149,40 @@ Released under the Apache License 2.0. See [LICENSE.txt](LICENSE.txt).
 ## Citation
 
 ```bibtex
-@inproceedings{yu2025point2rbox2,
+@article{yu2025whollywood,
+  title={Wholly-WOOD: Wholly Leveraging Diversified-quality Labels for Weakly-supervised Oriented Object Detection},
+  author={Yi Yu and Xue Yang and Yansheng Li and Zhenjun Han and Feipeng Da and Junchi Yan},
+  year={2025},
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence},
+}
+
+@inproceedings{yu2025point2rboxv2,
   title={Point2RBox-v2: Rethinking Point-supervised Oriented Object Detection with Spatial Layout Among Instances},
   author={Yi Yu and Botao Ren and Peiyuan Zhang and Mingxin Liu and Junwei Luo and Shaofeng Zhang and Feipeng Da and Junchi Yan and Xue Yang},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
-  year={2025}
+  booktitle={IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={19283--19293},
+  year={2025},
+}
+
+@inproceedings{yu2024point2rbox,
+  title={Point2RBox: Combine Knowledge from Synthetic Visual Patterns for End-to-end Oriented Object Detection with Single Point Supervision},
+  author={Yu, Yi and Yang, Xue and Li, Qingyun and Da, Feipeng and Dai, Jifeng and Qiao, Yu and Yan, Junchi},
+  booktitle={IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={16783--16793},
+  year={2024}
+}
+
+@inproceedings{yu2023h2rboxv2,
+  author={Yi Yu and Xue Yang and Qingyun Li and Yue Zhou and Feipeng Da and Junchi Yan},
+  title={H2RBox-v2: Incorporating Symmetry for Boosting Horizontal Box Supervised Oriented Object Detection},
+  booktitle={Neural Information Processing Systems},
+  year={2023},
+}
+
+@inproceedings{yang2023h2rbox,
+  title={H2RBox: Horizontal Box Annotation is All You Need for Oriented Object Detection},
+  author={Yang, Xue and Zhang, Gefan and Li, Wentong and Wang, Xuehui and Zhou, Yue and Yan, Junchi},
+  booktitle={International Conference on Learning Representations},
+  year={2023}
 }
 ```
